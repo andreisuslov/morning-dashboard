@@ -1,0 +1,45 @@
+{
+  "gmail": {
+    "enabled": true,
+    "maxEmails": 10,
+    "query": "is:unread newer_than:3d"
+  },
+  "calendar": {
+    "enabled": true,
+    "id": "primary",
+    "showFocusTime": true,
+    "lookaheadDays": 1
+  },
+  "todoist": {
+    "enabled": true,
+    "cliPath": "~/clawd/skills/todoist/scripts/todoist",
+    "showUpcoming": true,
+    "upcomingDays": 7
+  },
+  "weather": {
+    "enabled": true,
+    "location": "",
+    "units": "imperial"
+  },
+  "quote": {
+    "enabled": true
+  },
+  "github": {
+    "enabled": true,
+    "maxNotifications": 5
+  },
+  "system": {
+    "enabled": true,
+    "showBattery": true
+  },
+  "display": {
+    "width": 80,
+    "maxTasksShown": 12,
+    "maxEmailsShown": 6,
+    "maxEventsShown": 8,
+    "compact": false,
+    "color": true,
+    "showGreeting": true,
+    "showSummary": true
+  }
+}
