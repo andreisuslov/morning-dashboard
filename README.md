@@ -49,11 +49,27 @@ echo 'export TODOIST_API_TOKEN="your_token"' >> ~/.zshrc
 git clone https://github.com/andreisuslov/morning-dashboard.git
 cd morning-dashboard
 
-# Make executable
-chmod +x dashboard.js
+# Run the install script
+./install.sh
+```
 
-# Run it
-./dashboard.js
+This will:
+- Make the dashboard executable
+- Add `mdash` alias to your shell config (~/.zshrc or ~/.bashrc)
+- Optionally install the launchd agent for scheduled 7:30 AM runs
+
+### Manual Installation
+
+```bash
+chmod +x dashboard.js
+echo 'alias mdash="~/path/to/morning-dashboard/dashboard.js"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+## Usage
+
+```bash
+mdash       # Run the dashboard
 ```
 
 ## Scheduling (macOS)
