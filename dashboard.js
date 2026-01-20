@@ -1362,6 +1362,14 @@ function generateHTML(data, config, status) {
   const totalGithub = data.github.length;
   const hasAnything = totalTasks > 0 || totalEvents > 0 || totalEmails > 0 || totalGithub > 0;
   
+  // Time of day for background
+  const hour = new Date().getHours();
+  let timeOfDay = 'morning';
+  if (hour >= 5 && hour < 12) timeOfDay = 'morning';
+  else if (hour >= 12 && hour < 17) timeOfDay = 'noon';
+  else if (hour >= 17 && hour < 21) timeOfDay = 'evening';
+  else timeOfDay = 'night';
+  
   // SVG Icons (Linear-style)
   const icons = {
     tasks: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -1370,13 +1378,12 @@ function generateHTML(data, config, status) {
     github: '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
     sun: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
     check: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/></svg>',
-    checkFilled: '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="7" r="7"/></svg>',
     pr: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10 9v2.5a1 1 0 01-1 1H5a1 1 0 01-1-1v-7a1 1 0 011-1h4a1 1 0 011 1V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M7 1.5v4M5 3.5l2-2 2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     issue: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="1" fill="currentColor"/></svg>',
   };
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="${timeOfDay}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1392,38 +1399,94 @@ function generateHTML(data, config, status) {
       padding: 0;
     }
     
+    /* Time-based color themes */
     :root {
-      --background: #09090b;
-      --background-secondary: #18181b;
-      --background-tertiary: #27272a;
-      --border: rgba(255, 255, 255, 0.08);
-      --border-hover: rgba(255, 255, 255, 0.12);
-      --foreground: #fafafa;
-      --foreground-muted: #a1a1aa;
-      --foreground-subtle: #71717a;
-      --accent: #6366f1;
-      --accent-foreground: #fff;
-      --success: #22c55e;
-      --warning: #f59e0b;
-      --destructive: #ef4444;
-      --ring: rgba(99, 102, 241, 0.4);
-      --radius: 8px;
-      --radius-lg: 12px;
+      /* Morning: 5am - 12pm - Warm peachy tones */
+      --morning-bg: rgba(253,242,235,1);
+      --morning-secondary: rgba(254,231,212,1);
+      --morning-accent: rgba(220,158,114,1);
+      
+      /* Noon: 12pm - 5pm - Warm orange */
+      --noon-bg: rgba(252,222,201,1);
+      --noon-secondary: rgba(254,231,212,1);
+      --noon-accent: rgba(243,83,102,1);
+      
+      /* Evening: 5pm - 9pm - Deep orange/salmon */
+      --evening-bg: rgba(220,158,114,1);
+      --evening-secondary: rgba(252,222,201,1);
+      --evening-accent: rgba(97,68,48,1);
+      
+      /* Night: 9pm - 5am - Dark brown */
+      --night-bg: rgba(97,68,48,1);
+      --night-secondary: rgba(72,50,35,1);
+      --night-accent: rgba(220,158,114,1);
+      
+      /* Shared colors */
+      --lightblue: rgba(140,202,202,1);
+      --midblue: rgba(8,91,144,1);
+      --darkblue: rgba(16,24,84,1);
+      --red: rgba(243,83,102,1);
+      --success: rgba(140,202,202,1);
+      --warning: rgba(243,83,102,1);
+      
+      --radius: 12px;
+      --radius-lg: 16px;
     }
     
-    @media (prefers-color-scheme: light) {
-      :root {
-        --background: #fafafa;
-        --background-secondary: #ffffff;
-        --background-tertiary: #f4f4f5;
-        --border: rgba(0, 0, 0, 0.08);
-        --border-hover: rgba(0, 0, 0, 0.12);
-        --foreground: #09090b;
-        --foreground-muted: #71717a;
-        --foreground-subtle: #a1a1aa;
-        --accent: #6366f1;
-        --ring: rgba(99, 102, 241, 0.3);
-      }
+    /* Morning theme */
+    html.morning {
+      --background: var(--morning-bg);
+      --background-secondary: rgba(255,255,255,0.7);
+      --background-tertiary: rgba(255,255,255,0.5);
+      --border: rgba(0,0,0,0.08);
+      --border-hover: rgba(0,0,0,0.12);
+      --foreground: rgba(97,68,48,1);
+      --foreground-muted: rgba(150,120,100,1);
+      --foreground-subtle: rgba(180,150,130,1);
+      --accent: var(--midblue);
+      --card-shadow: 0 4px 24px rgba(97,68,48,0.1);
+    }
+    
+    /* Noon theme */
+    html.noon {
+      --background: var(--noon-bg);
+      --background-secondary: rgba(255,255,255,0.75);
+      --background-tertiary: rgba(255,255,255,0.5);
+      --border: rgba(0,0,0,0.08);
+      --border-hover: rgba(0,0,0,0.12);
+      --foreground: rgba(97,68,48,1);
+      --foreground-muted: rgba(140,100,80,1);
+      --foreground-subtle: rgba(170,130,110,1);
+      --accent: var(--red);
+      --card-shadow: 0 4px 24px rgba(97,68,48,0.12);
+    }
+    
+    /* Evening theme */
+    html.evening {
+      --background: var(--evening-bg);
+      --background-secondary: rgba(255,255,255,0.6);
+      --background-tertiary: rgba(255,255,255,0.4);
+      --border: rgba(0,0,0,0.1);
+      --border-hover: rgba(0,0,0,0.15);
+      --foreground: rgba(50,35,25,1);
+      --foreground-muted: rgba(80,60,45,1);
+      --foreground-subtle: rgba(120,90,70,1);
+      --accent: var(--darkblue);
+      --card-shadow: 0 4px 24px rgba(50,35,25,0.15);
+    }
+    
+    /* Night theme */
+    html.night {
+      --background: var(--night-bg);
+      --background-secondary: rgba(0,0,0,0.3);
+      --background-tertiary: rgba(0,0,0,0.2);
+      --border: rgba(255,255,255,0.1);
+      --border-hover: rgba(255,255,255,0.15);
+      --foreground: rgba(254,231,212,1);
+      --foreground-muted: rgba(200,180,160,1);
+      --foreground-subtle: rgba(160,140,120,1);
+      --accent: var(--lightblue);
+      --card-shadow: 0 4px 24px rgba(0,0,0,0.3);
     }
     
     html {
@@ -1492,28 +1555,6 @@ function generateHTML(data, config, status) {
     .header-weather-temp {
       font-weight: 500;
       color: var(--foreground);
-    }
-    
-    /* Quote */
-    .quote {
-      text-align: center;
-      padding: 20px 32px;
-      margin-bottom: 32px;
-      background: var(--background-secondary);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-    }
-    
-    .quote-text {
-      font-size: 15px;
-      font-style: italic;
-      color: var(--foreground-muted);
-      margin-bottom: 8px;
-    }
-    
-    .quote-author {
-      font-size: 13px;
-      color: var(--foreground-subtle);
     }
     
     /* Setup Banner */
@@ -1835,9 +1876,6 @@ function generateHTML(data, config, status) {
     
     /* Weather */
     .weather-content {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 24px;
       padding: 20px;
     }
     
@@ -1845,14 +1883,15 @@ function generateHTML(data, config, status) {
       display: flex;
       align-items: center;
       gap: 16px;
+      margin-bottom: 16px;
     }
     
     .weather-icon {
-      font-size: 48px;
+      font-size: 40px;
     }
     
     .weather-temp {
-      font-size: 36px;
+      font-size: 32px;
       font-weight: 600;
       letter-spacing: -0.02em;
     }
@@ -1863,16 +1902,16 @@ function generateHTML(data, config, status) {
     }
     
     .weather-details {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
-      font-size: 13px;
+      font-size: 12px;
     }
     
     .weather-detail {
       display: flex;
-      justify-content: space-between;
-      padding: 8px 12px;
+      gap: 6px;
+      padding: 6px 10px;
       background: var(--background-tertiary);
       border-radius: var(--radius);
     }
@@ -1995,13 +2034,6 @@ function generateHTML(data, config, status) {
         ` : ''}
       </div>
     </header>
-    
-    ${config.quote?.enabled ? `
-    <div class="quote">
-      <p class="quote-text">"${escapeHtml(data.quote.text)}"</p>
-      <p class="quote-author">— ${escapeHtml(data.quote.author)}</p>
-    </div>
-    ` : ''}
     
     <div class="grid">
       <!-- Tasks -->
@@ -2155,12 +2187,12 @@ function generateHTML(data, config, status) {
           </div>
           <div class="weather-details">
             <div class="weather-detail">
-              <span class="weather-detail-label">Feels like</span>
-              <span class="weather-detail-value">${data.weather.feelsLike}${data.weather.unit}</span>
+              <span class="weather-detail-label">Feels</span>
+              <span class="weather-detail-value">${data.weather.feelsLike}°</span>
             </div>
             <div class="weather-detail">
-              <span class="weather-detail-label">High / Low</span>
-              <span class="weather-detail-value">${data.weather.high}° / ${data.weather.low}°</span>
+              <span class="weather-detail-label">H/L</span>
+              <span class="weather-detail-value">${data.weather.high}°/${data.weather.low}°</span>
             </div>
             <div class="weather-detail">
               <span class="weather-detail-label">Humidity</span>
@@ -2168,13 +2200,12 @@ function generateHTML(data, config, status) {
             </div>
             <div class="weather-detail">
               <span class="weather-detail-label">Wind</span>
-              <span class="weather-detail-value">${data.weather.windSpeed} ${data.weather.windUnit}</span>
+              <span class="weather-detail-value">${data.weather.windSpeed}</span>
             </div>
           </div>
         </div>
       </div>
       ` : ''}
-    </div>
     
     <footer class="footer">
       ${hasAnything ? `
