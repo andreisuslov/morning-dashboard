@@ -1355,124 +1355,797 @@ function generateHTML(data, config, status) {
   const weatherIcon = data.weather ? getWeatherIconEmoji(data.weather.condition) : '🌡️';
   const showSetup = status && (!status.google.authenticated || !status.todoist.working);
   
-  // Calculate totals for summary
+  // Calculate totals
   const totalTasks = data.tasks.overdue.length + data.tasks.today.length;
   const totalEvents = data.calendar.events.length;
   const totalEmails = data.email.length;
   const totalGithub = data.github.length;
   const hasAnything = totalTasks > 0 || totalEvents > 0 || totalEmails > 0 || totalGithub > 0;
   
-  // Render task items
-  const renderTasks = () => {
-    const allTasks = [...data.tasks.overdue, ...data.tasks.today];
-    if (allTasks.length === 0) {
-      return '<div class="empty-state"><div class="emoji">✨</div><div>No tasks due today</div></div>';
+  // SVG Icons (Linear-style)
+  const icons = {
+    tasks: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    calendar: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M2 6h12M5 1.5v3M11 1.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    mail: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="3" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M2 4l6 4 6-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    github: '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
+    sun: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    check: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/></svg>',
+    checkFilled: '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="7" r="7"/></svg>',
+    pr: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10 9v2.5a1 1 0 01-1 1H5a1 1 0 01-1-1v-7a1 1 0 011-1h4a1 1 0 011 1V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M7 1.5v4M5 3.5l2-2 2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    issue: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="1" fill="currentColor"/></svg>',
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morning Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☀️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
-    return allTasks.map(t => `
-      <div class="item">
-        <div class="item-icon priority-${t.priority}">${t.priority >= 3 ? '●' : '○'}</div>
-        <div class="item-content">
-          <div class="item-title">${escapeHtml(t.content)}</div>
-          ${t.due ? `<div class="item-meta">${escapeHtml(t.due)}</div>` : ''}
-        </div>
-        ${t.isOverdue ? '<span class="item-badge overdue-badge">Overdue</span>' : ''}
-      </div>
-    `).join('');
-  };
-  
-  // Render calendar items
-  const renderCalendar = () => {
-    if (data.calendar.events.length === 0) {
-      return '<div class="empty-state"><div class="emoji">📭</div><div>No events scheduled</div></div>';
+    
+    :root {
+      --background: #09090b;
+      --background-secondary: #18181b;
+      --background-tertiary: #27272a;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(255, 255, 255, 0.12);
+      --foreground: #fafafa;
+      --foreground-muted: #a1a1aa;
+      --foreground-subtle: #71717a;
+      --accent: #6366f1;
+      --accent-foreground: #fff;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --destructive: #ef4444;
+      --ring: rgba(99, 102, 241, 0.4);
+      --radius: 8px;
+      --radius-lg: 12px;
     }
-    const now = new Date();
-    return data.calendar.events.map((e, i) => {
-      const isPast = !e.allDay && new Date(e.end) < now;
-      const isNext = !isPast && !e.allDay && data.calendar.events.slice(0, i).every(ev => ev.allDay || new Date(ev.end) < now);
-      return `
-        <div class="item">
-          <div class="event-time ${e.allDay ? 'all-day' : ''} ${isPast ? 'past' : ''}">
-            ${e.allDay ? 'All day' : formatTimeLong(new Date(e.start))}
-          </div>
-          <div class="item-content">
-            <div class="item-title" ${isPast ? 'style="color: var(--text-dim);"' : ''}>${escapeHtml(e.summary)}</div>
-            ${e.location ? `<div class="item-meta">📍 ${escapeHtml(e.location)}</div>` : ''}
-            ${e.meetLink ? `<div class="item-meta"><a href="${escapeHtml(e.meetLink)}" target="_blank" style="color: var(--accent);">🔗 Join meeting</a></div>` : ''}
-          </div>
-          ${isNext ? '<span class="item-badge next-badge">Next</span>' : ''}
-        </div>
-      `;
-    }).join('');
-  };
-  
-  // Render focus blocks
-  const renderFocusBlocks = () => {
-    if (data.calendar.focusBlocks.length === 0) return '';
-    return `
-      <div class="focus-section">
-        <div class="focus-title">◆ Focus Time Available</div>
-        ${data.calendar.focusBlocks.map(b => `
-          <div class="focus-block">
-            <span class="time">${formatTimeLong(new Date(b.start))}</span>
-            <span>—</span>
-            <span>${formatDuration(b.duration)} available</span>
-          </div>
-        `).join('')}
-      </div>
-    `;
-  };
-  
-  // Render email items
-  const renderEmails = () => {
-    if (data.email.length === 0) {
-      return '<div class="empty-state"><div class="emoji">🎉</div><div>Inbox zero!</div></div>';
+    
+    @media (prefers-color-scheme: light) {
+      :root {
+        --background: #fafafa;
+        --background-secondary: #ffffff;
+        --background-tertiary: #f4f4f5;
+        --border: rgba(0, 0, 0, 0.08);
+        --border-hover: rgba(0, 0, 0, 0.12);
+        --foreground: #09090b;
+        --foreground-muted: #71717a;
+        --foreground-subtle: #a1a1aa;
+        --accent: #6366f1;
+        --ring: rgba(99, 102, 241, 0.3);
+      }
     }
-    return data.email.map(e => `
-      <div class="item">
-        <div class="item-icon">✉️</div>
-        <div class="item-content">
-          <div class="item-title">${escapeHtml(e.subject)}</div>
-          <div class="item-meta" style="color: var(--accent);">${escapeHtml(e.from)}</div>
-        </div>
+    
+    html {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    body {
+      background: var(--background);
+      color: var(--foreground);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    
+    .app {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    
+    /* Header */
+    .header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 32px;
+      margin-bottom: 32px;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .header-greeting {
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--foreground);
+    }
+    
+    .header-greeting span {
+      display: inline-block;
+    }
+    
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: var(--foreground-muted);
+    }
+    
+    .header-separator {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--foreground-subtle);
+    }
+    
+    .header-weather {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .header-weather-temp {
+      font-weight: 500;
+      color: var(--foreground);
+    }
+    
+    /* Quote */
+    .quote {
+      text-align: center;
+      padding: 20px 32px;
+      margin-bottom: 32px;
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+    
+    .quote-text {
+      font-size: 15px;
+      font-style: italic;
+      color: var(--foreground-muted);
+      margin-bottom: 8px;
+    }
+    
+    .quote-author {
+      font-size: 13px;
+      color: var(--foreground-subtle);
+    }
+    
+    /* Setup Banner */
+    .banner {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 20px;
+      margin-bottom: 32px;
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: var(--radius-lg);
+    }
+    
+    .banner-icon {
+      font-size: 20px;
+    }
+    
+    .banner-content {
+      flex: 1;
+    }
+    
+    .banner-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--warning);
+      margin-bottom: 2px;
+    }
+    
+    .banner-text {
+      font-size: 13px;
+      color: var(--foreground-muted);
+    }
+    
+    .banner-text code {
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 12px;
+      padding: 2px 6px;
+      background: var(--background-tertiary);
+      border-radius: 4px;
+    }
+    
+    .banner-action {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #000;
+      background: var(--warning);
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 150ms;
+    }
+    
+    .banner-action:hover {
+      opacity: 0.9;
+    }
+    
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+    
+    /* Card */
+    .card {
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      transition: border-color 150ms, box-shadow 150ms;
+    }
+    
+    .card:hover {
+      border-color: var(--border-hover);
+    }
+    
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+    
+    .card-title-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius);
+      background: var(--background-tertiary);
+      color: var(--foreground-muted);
+    }
+    
+    .card-badges {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 9999px;
+      background: var(--background-tertiary);
+      color: var(--foreground-muted);
+    }
+    
+    .badge-accent {
+      background: rgba(99, 102, 241, 0.15);
+      color: var(--accent);
+    }
+    
+    .badge-destructive {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--destructive);
+    }
+    
+    .card-body {
+      max-height: 380px;
+      overflow-y: auto;
+    }
+    
+    .card-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .card-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    
+    .card-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+    
+    /* Empty State */
+    .empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      text-align: center;
+    }
+    
+    .empty-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      opacity: 0.6;
+    }
+    
+    .empty-text {
+      font-size: 14px;
+      color: var(--foreground-subtle);
+    }
+    
+    /* List Item */
+    .list-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: background 100ms;
+    }
+    
+    .list-item:last-child {
+      border-bottom: none;
+    }
+    
+    .list-item:hover {
+      background: var(--background-tertiary);
+    }
+    
+    .list-item-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      flex-shrink: 0;
+    }
+    
+    .list-item-indicator svg {
+      width: 14px;
+      height: 14px;
+    }
+    
+    .list-item-content {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .list-item-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--foreground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .list-item-title.dimmed {
+      color: var(--foreground-subtle);
+    }
+    
+    .list-item-meta {
+      font-size: 13px;
+      color: var(--foreground-subtle);
+      margin-top: 2px;
+    }
+    
+    .list-item-meta a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    
+    .list-item-meta a:hover {
+      text-decoration: underline;
+    }
+    
+    .list-item-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    
+    .list-item-badge-destructive {
+      background: rgba(239, 68, 68, 0.12);
+      color: var(--destructive);
+    }
+    
+    .list-item-badge-success {
+      background: rgba(34, 197, 94, 0.12);
+      color: var(--success);
+    }
+    
+    /* Priority */
+    .priority-4 { color: var(--destructive); }
+    .priority-3 { color: var(--warning); }
+    .priority-2 { color: var(--accent); }
+    .priority-1 { color: var(--foreground-subtle); }
+    
+    /* Event */
+    .event-time {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+      min-width: 72px;
+      flex-shrink: 0;
+    }
+    
+    .event-time.all-day {
+      color: var(--foreground-muted);
+    }
+    
+    .event-time.past {
+      color: var(--foreground-subtle);
+    }
+    
+    /* Focus Section */
+    .focus-section {
+      padding: 16px 20px;
+      background: rgba(34, 197, 94, 0.04);
+      border-top: 1px solid var(--border);
+    }
+    
+    .focus-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--success);
+      margin-bottom: 12px;
+    }
+    
+    .focus-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--foreground-muted);
+      padding: 6px 0;
+    }
+    
+    .focus-item-time {
+      font-weight: 500;
+      color: var(--success);
+    }
+    
+    /* Weather */
+    .weather-content {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 24px;
+      padding: 20px;
+    }
+    
+    .weather-main {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    
+    .weather-icon {
+      font-size: 48px;
+    }
+    
+    .weather-temp {
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    
+    .weather-condition {
+      font-size: 14px;
+      color: var(--foreground-muted);
+    }
+    
+    .weather-details {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      font-size: 13px;
+    }
+    
+    .weather-detail {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--background-tertiary);
+      border-radius: var(--radius);
+    }
+    
+    .weather-detail-label {
+      color: var(--foreground-subtle);
+    }
+    
+    .weather-detail-value {
+      font-weight: 500;
+      color: var(--foreground);
+    }
+    
+    /* Footer */
+    .footer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+    
+    .summary {
+      display: flex;
+      gap: 24px;
+    }
+    
+    .summary-item {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    
+    .summary-count {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    
+    .summary-count.destructive { color: var(--destructive); }
+    .summary-count.warning { color: var(--warning); }
+    .summary-count.accent { color: var(--accent); }
+    .summary-count.muted { color: var(--foreground-muted); }
+    
+    .summary-label {
+      font-size: 14px;
+      color: var(--foreground-subtle);
+    }
+    
+    .all-clear {
+      font-size: 16px;
+      color: var(--success);
+    }
+    
+    .footer-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--foreground-subtle);
+    }
+    
+    .refresh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--foreground);
+      background: var(--background-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 100ms, border-color 100ms;
+    }
+    
+    .refresh-btn:hover {
+      background: var(--background-secondary);
+      border-color: var(--border-hover);
+    }
+    
+    /* Responsive */
+    @media (max-width: 840px) {
+      .app { padding: 20px 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .header-greeting { font-size: 24px; }
+      .weather-content { grid-template-columns: 1fr; }
+      .summary { gap: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    ${showSetup ? `
+    <div class="banner">
+      <div class="banner-icon">⚙️</div>
+      <div class="banner-content">
+        <div class="banner-title">Setup Incomplete</div>
+        <div class="banner-text">Run <code>mdash setup</code> to configure integrations</div>
       </div>
-    `).join('');
-  };
-  
-  // Render GitHub items
-  const renderGithub = () => {
-    if (data.github.length === 0) return '';
-    const icons = { PullRequest: '🔀', Issue: '🐛', Release: '🏷️', Discussion: '💬' };
-    return `
+      <a href="/setup" class="banner-action">View Status</a>
+    </div>
+    ` : ''}
+    
+    <header class="header">
+      <h1 class="header-greeting"><span>☀️</span> ${data.greeting}</h1>
+      <div class="header-meta">
+        <span>${formatDateLong(new Date())}</span>
+        <span class="header-separator"></span>
+        <span>${formatTimeLong(new Date())}</span>
+        ${data.weather ? `
+        <span class="header-separator"></span>
+        <span class="header-weather">
+          <span>${weatherIcon}</span>
+          <span class="header-weather-temp">${data.weather.temp}${data.weather.unit}</span>
+          <span>${data.weather.condition}</span>
+        </span>
+        ` : ''}
+      </div>
+    </header>
+    
+    ${config.quote?.enabled ? `
+    <div class="quote">
+      <p class="quote-text">"${escapeHtml(data.quote.text)}"</p>
+      <p class="quote-author">— ${escapeHtml(data.quote.author)}</p>
+    </div>
+    ` : ''}
+    
+    <div class="grid">
+      <!-- Tasks -->
       <div class="card">
         <div class="card-header">
-          <div class="card-title">🐙 GitHub</div>
-          <span class="card-count">${data.github.length}</span>
+          <div class="card-title">
+            <div class="card-title-icon">${icons.tasks}</div>
+            <span>Tasks</span>
+          </div>
+          <div class="card-badges">
+            ${data.tasks.overdue.length > 0 ? `<span class="badge badge-destructive">${data.tasks.overdue.length} overdue</span>` : ''}
+            ${data.tasks.today.length > 0 ? `<span class="badge badge-accent">${data.tasks.today.length} today</span>` : ''}
+          </div>
         </div>
         <div class="card-body">
-          ${data.github.map(n => `
-            <div class="item">
-              <div class="item-icon">${icons[n.type] || '📌'}</div>
-              <div class="item-content">
-                <div class="item-title">${escapeHtml(n.title)}</div>
-                <div class="item-meta">${escapeHtml(n.repo)}</div>
-              </div>
+          ${totalTasks === 0 ? `
+          <div class="empty">
+            <div class="empty-icon">✓</div>
+            <div class="empty-text">No tasks due today</div>
+          </div>
+          ` : [...data.tasks.overdue, ...data.tasks.today].map(t => `
+          <div class="list-item">
+            <div class="list-item-indicator priority-${t.priority}">${icons.check}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">${escapeHtml(t.content)}</div>
+              ${t.due ? `<div class="list-item-meta">${escapeHtml(t.due)}</div>` : ''}
             </div>
+            ${t.isOverdue ? '<span class="list-item-badge list-item-badge-destructive">Overdue</span>' : ''}
+          </div>
           `).join('')}
         </div>
       </div>
-    `;
-  };
-  
-  // Render weather card
-  const renderWeather = () => {
-    if (!data.weather) return '';
-    return `
+      
+      <!-- Calendar -->
       <div class="card">
         <div class="card-header">
-          <div class="card-title">🌤️ Weather</div>
-          <span class="card-count">${data.weather.location}</span>
+          <div class="card-title">
+            <div class="card-title-icon">${icons.calendar}</div>
+            <span>Calendar</span>
+          </div>
+          ${totalEvents > 0 ? `<span class="badge">${totalEvents} events</span>` : ''}
         </div>
-        <div class="weather-card">
+        <div class="card-body">
+          ${totalEvents === 0 ? `
+          <div class="empty">
+            <div class="empty-icon">📅</div>
+            <div class="empty-text">No events scheduled</div>
+          </div>
+          ` : data.calendar.events.map((e, i) => {
+            const now = new Date();
+            const isPast = !e.allDay && new Date(e.end) < now;
+            const isNext = !isPast && !e.allDay && data.calendar.events.slice(0, i).every(ev => ev.allDay || new Date(ev.end) < now);
+            return `
+            <div class="list-item">
+              <div class="event-time ${e.allDay ? 'all-day' : ''} ${isPast ? 'past' : ''}">${e.allDay ? 'All day' : formatTimeLong(new Date(e.start))}</div>
+              <div class="list-item-content">
+                <div class="list-item-title ${isPast ? 'dimmed' : ''}">${escapeHtml(e.summary)}</div>
+                ${e.location ? `<div class="list-item-meta">📍 ${escapeHtml(e.location)}</div>` : ''}
+                ${e.meetLink ? `<div class="list-item-meta"><a href="${escapeHtml(e.meetLink)}" target="_blank">Join meeting →</a></div>` : ''}
+              </div>
+              ${isNext ? '<span class="list-item-badge list-item-badge-success">Next</span>' : ''}
+            </div>
+            `;
+          }).join('')}
+          ${data.calendar.focusBlocks.length > 0 ? `
+          <div class="focus-section">
+            <div class="focus-header">
+              <span>◆</span>
+              <span>Focus Time Available</span>
+            </div>
+            ${data.calendar.focusBlocks.map(b => `
+            <div class="focus-item">
+              <span class="focus-item-time">${formatTimeLong(new Date(b.start))}</span>
+              <span>—</span>
+              <span>${formatDuration(b.duration)} available</span>
+            </div>
+            `).join('')}
+          </div>
+          ` : ''}
+        </div>
+      </div>
+      
+      <!-- Email -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">${icons.mail}</div>
+            <span>Inbox</span>
+          </div>
+          ${totalEmails > 0 ? `<span class="badge">${totalEmails} unread</span>` : ''}
+        </div>
+        <div class="card-body">
+          ${totalEmails === 0 ? `
+          <div class="empty">
+            <div class="empty-icon">📭</div>
+            <div class="empty-text">Inbox zero!</div>
+          </div>
+          ` : data.email.map(e => `
+          <div class="list-item">
+            <div class="list-item-indicator">${icons.mail}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">${escapeHtml(e.subject)}</div>
+              <div class="list-item-meta">${escapeHtml(e.from)}</div>
+            </div>
+          </div>
+          `).join('')}
+        </div>
+      </div>
+      
+      <!-- GitHub -->
+      ${totalGithub > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">${icons.github}</div>
+            <span>GitHub</span>
+          </div>
+          <span class="badge">${totalGithub}</span>
+        </div>
+        <div class="card-body">
+          ${data.github.map(n => `
+          <div class="list-item">
+            <div class="list-item-indicator">${n.type === 'PullRequest' ? icons.pr : icons.issue}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">${escapeHtml(n.title)}</div>
+              <div class="list-item-meta">${escapeHtml(n.repo)}</div>
+            </div>
+          </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+      
+      <!-- Weather -->
+      ${data.weather ? `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">${icons.sun}</div>
+            <span>Weather</span>
+          </div>
+          <span class="badge">${data.weather.location}</span>
+        </div>
+        <div class="weather-content">
           <div class="weather-main">
             <div class="weather-icon">${weatherIcon}</div>
             <div>
@@ -1482,442 +2155,43 @@ function generateHTML(data, config, status) {
           </div>
           <div class="weather-details">
             <div class="weather-detail">
-              <span class="label">Feels like</span>
-              <span>${data.weather.feelsLike}${data.weather.unit}</span>
+              <span class="weather-detail-label">Feels like</span>
+              <span class="weather-detail-value">${data.weather.feelsLike}${data.weather.unit}</span>
             </div>
             <div class="weather-detail">
-              <span class="label">High / Low</span>
-              <span>${data.weather.high}° / ${data.weather.low}°</span>
+              <span class="weather-detail-label">High / Low</span>
+              <span class="weather-detail-value">${data.weather.high}° / ${data.weather.low}°</span>
             </div>
             <div class="weather-detail">
-              <span class="label">Humidity</span>
-              <span>${data.weather.humidity}%</span>
+              <span class="weather-detail-label">Humidity</span>
+              <span class="weather-detail-value">${data.weather.humidity}%</span>
             </div>
             <div class="weather-detail">
-              <span class="label">Wind</span>
-              <span>${data.weather.windSpeed} ${data.weather.windUnit}</span>
+              <span class="weather-detail-label">Wind</span>
+              <span class="weather-detail-value">${data.weather.windSpeed} ${data.weather.windUnit}</span>
             </div>
           </div>
         </div>
       </div>
-    `;
-  };
-  
-  // Render summary
-  const renderSummary = () => {
-    if (!hasAnything) {
-      return '<div class="all-clear">✨ All clear! Have a great day.</div>';
-    }
-    const items = [];
-    if (data.tasks.overdue.length > 0) items.push(`<div class="summary-item overdue"><span class="summary-count">${data.tasks.overdue.length}</span><span class="summary-label">overdue</span></div>`);
-    if (data.tasks.today.length > 0) items.push(`<div class="summary-item tasks"><span class="summary-count">${data.tasks.today.length}</span><span class="summary-label">tasks</span></div>`);
-    if (totalEvents > 0) items.push(`<div class="summary-item events"><span class="summary-count">${totalEvents}</span><span class="summary-label">events</span></div>`);
-    if (totalEmails > 0) items.push(`<div class="summary-item emails"><span class="summary-count">${totalEmails}</span><span class="summary-label">emails</span></div>`);
-    if (totalGithub > 0) items.push(`<div class="summary-item github"><span class="summary-count">${totalGithub}</span><span class="summary-label">notifications</span></div>`);
-    return `<div class="summary">${items.join('')}</div>`;
-  };
-  
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Morning Dashboard</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☀️</text></svg>">
-  <style>
-    :root {
-      --bg: #0f172a;
-      --bg-card: #1e293b;
-      --bg-hover: #334155;
-      --border: #475569;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --text-dim: #64748b;
-      --accent: #38bdf8;
-      --green: #4ade80;
-      --yellow: #fbbf24;
-      --red: #f87171;
-      --purple: #a78bfa;
-      --pink: #f472b6;
-    }
-    
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #f8fafc;
-        --bg-card: #ffffff;
-        --bg-hover: #f1f5f9;
-        --border: #e2e8f0;
-        --text: #0f172a;
-        --text-muted: #64748b;
-        --text-dim: #94a3b8;
-        --accent: #0ea5e9;
-        --green: #22c55e;
-        --yellow: #eab308;
-        --red: #ef4444;
-        --purple: #8b5cf6;
-        --pink: #ec4899;
-      }
-    }
-    
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      min-height: 100vh;
-      padding: 2rem;
-    }
-    
-    .container { max-width: 1200px; margin: 0 auto; }
-    
-    /* Setup Banner */
-    .setup-banner {
-      background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(251, 191, 36, 0.05));
-      border: 1px solid var(--yellow);
-      border-radius: 12px;
-      padding: 1rem 1.5rem;
-      margin-bottom: 2rem;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-    }
-    .setup-banner-icon { font-size: 1.5rem; }
-    .setup-banner-content { flex: 1; }
-    .setup-banner-title { font-weight: 600; color: var(--yellow); }
-    .setup-banner-text { font-size: 0.9rem; color: var(--text-muted); }
-    .setup-banner code { background: var(--bg-hover); padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
-    .setup-btn {
-      background: var(--yellow);
-      color: #000;
-      border: none;
-      padding: 0.5rem 1rem;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      text-decoration: none;
-      transition: opacity 0.2s;
-    }
-    .setup-btn:hover { opacity: 0.9; }
-    
-    /* Header */
-    .header {
-      text-align: center;
-      margin-bottom: 2rem;
-      padding-bottom: 2rem;
-      border-bottom: 1px solid var(--border);
-    }
-    .greeting {
-      font-size: 2.5rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-      background: linear-gradient(135deg, var(--accent), var(--purple));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .greeting .sun {
-      display: inline-block;
-      animation: float 3s ease-in-out infinite;
-      -webkit-text-fill-color: initial;
-    }
-    @keyframes float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-5px); }
-    }
-    .date-time { color: var(--text-muted); font-size: 1.1rem; margin-bottom: 0.5rem; }
-    .weather-line { color: var(--text-muted); font-size: 1rem; }
-    .weather-line .temp { color: var(--text); font-weight: 600; }
-    
-    /* Quote */
-    .quote {
-      text-align: center;
-      margin-bottom: 2rem;
-      padding: 1.5rem 2rem;
-      background: var(--bg-card);
-      border-radius: 12px;
-      border: 1px solid var(--border);
-    }
-    .quote-text { font-size: 1.15rem; font-style: italic; color: var(--text-muted); margin-bottom: 0.5rem; }
-    .quote-author { font-size: 0.9rem; color: var(--text-dim); }
-    
-    /* Grid */
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-      gap: 1.5rem;
-      margin-bottom: 2rem;
-    }
-    
-    /* Cards */
-    .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      overflow: hidden;
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-    }
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 1rem 1.25rem;
-      background: var(--bg-hover);
-      border-bottom: 1px solid var(--border);
-    }
-    .card-title {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-weight: 600;
-      font-size: 1rem;
-    }
-    .card-count {
-      background: var(--accent);
-      color: #000;
-      font-size: 0.75rem;
-      font-weight: 700;
-      padding: 0.2rem 0.6rem;
-      border-radius: 12px;
-    }
-    .card-count.warning { background: var(--red); color: #fff; }
-    .card-body { max-height: 400px; overflow-y: auto; }
-    .card-body::-webkit-scrollbar { width: 6px; }
-    .card-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-    
-    /* Empty State */
-    .empty-state {
-      padding: 3rem 2rem;
-      text-align: center;
-      color: var(--text-muted);
-    }
-    .empty-state .emoji { font-size: 2.5rem; margin-bottom: 0.75rem; }
-    
-    /* Items */
-    .item {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
-      padding: 1rem 1.25rem;
-      border-bottom: 1px solid var(--border);
-      transition: background 0.15s;
-    }
-    .item:last-child { border-bottom: none; }
-    .item:hover { background: var(--bg-hover); }
-    .item-icon { flex-shrink: 0; width: 24px; text-align: center; font-size: 1rem; }
-    .item-content { flex: 1; min-width: 0; }
-    .item-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .item-meta { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; }
-    .item-meta a { color: var(--accent); text-decoration: none; }
-    .item-meta a:hover { text-decoration: underline; }
-    .item-badge {
-      flex-shrink: 0;
-      font-size: 0.7rem;
-      padding: 0.2rem 0.6rem;
-      border-radius: 8px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    /* Priority colors */
-    .priority-4 { color: var(--red); }
-    .priority-3 { color: var(--yellow); }
-    .priority-2 { color: var(--accent); }
-    .priority-1 { color: var(--text-dim); }
-    
-    /* Badges */
-    .overdue-badge { background: rgba(248, 113, 113, 0.2); color: var(--red); }
-    .next-badge { background: rgba(74, 222, 128, 0.2); color: var(--green); }
-    
-    /* Event time */
-    .event-time {
-      flex-shrink: 0;
-      font-size: 0.85rem;
-      color: var(--accent);
-      font-weight: 600;
-      min-width: 75px;
-    }
-    .event-time.all-day { color: var(--purple); }
-    .event-time.past { color: var(--text-dim); }
-    
-    /* Focus Section */
-    .focus-section {
-      padding: 1rem 1.25rem;
-      background: rgba(74, 222, 128, 0.05);
-      border-top: 1px solid var(--border);
-    }
-    .focus-title {
-      font-size: 0.75rem;
-      font-weight: 700;
-      color: var(--green);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 0.75rem;
-    }
-    .focus-block {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-size: 0.9rem;
-      color: var(--text-muted);
-      padding: 0.35rem 0;
-    }
-    .focus-block .time { color: var(--green); font-weight: 600; }
-    
-    /* Weather Card */
-    .weather-card {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-      padding: 1.5rem;
-    }
-    .weather-main { display: flex; align-items: center; gap: 1rem; }
-    .weather-icon { font-size: 3.5rem; }
-    .weather-temp { font-size: 2.75rem; font-weight: 700; }
-    .weather-condition { color: var(--text-muted); font-size: 1rem; }
-    .weather-details { display: grid; grid-template-columns: 1fr; gap: 0.5rem; font-size: 0.9rem; }
-    .weather-detail { display: flex; justify-content: space-between; color: var(--text-muted); }
-    .weather-detail .label { color: var(--text-dim); }
-    
-    /* Footer */
-    .footer {
-      text-align: center;
-      padding: 2rem 0;
-      border-top: 1px solid var(--border);
-    }
-    .summary {
-      display: flex;
-      justify-content: center;
-      gap: 2rem;
-      flex-wrap: wrap;
-      margin-bottom: 1.5rem;
-    }
-    .summary-item { display: flex; align-items: baseline; gap: 0.4rem; }
-    .summary-count { font-weight: 700; font-size: 1.5rem; }
-    .summary-label { font-size: 0.9rem; color: var(--text-muted); }
-    .summary-item.overdue .summary-count { color: var(--red); }
-    .summary-item.tasks .summary-count { color: var(--yellow); }
-    .summary-item.events .summary-count { color: var(--accent); }
-    .summary-item.emails .summary-count { color: var(--purple); }
-    .summary-item.github .summary-count { color: var(--text-muted); }
-    
-    .all-clear {
-      font-size: 1.25rem;
-      color: var(--green);
-      margin-bottom: 1.5rem;
-    }
-    
-    .refresh-info { font-size: 0.85rem; color: var(--text-dim); }
-    .refresh-btn {
-      background: var(--bg-hover);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 0.5rem 1rem;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      margin-left: 0.5rem;
-      transition: all 0.2s;
-    }
-    .refresh-btn:hover { background: var(--border); }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-      body { padding: 1rem; }
-      .grid { grid-template-columns: 1fr; }
-      .greeting { font-size: 1.75rem; }
-      .weather-card { grid-template-columns: 1fr; }
-      .summary { gap: 1rem; }
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    ${showSetup ? `
-    <div class="setup-banner">
-      <div class="setup-banner-icon">⚙️</div>
-      <div class="setup-banner-content">
-        <div class="setup-banner-title">Setup Incomplete</div>
-        <div class="setup-banner-text">Run <code>mdash setup</code> in terminal to configure integrations</div>
-      </div>
-      <a href="/setup" class="setup-btn">View Status</a>
-    </div>
-    ` : ''}
-    
-    <header class="header">
-      <h1 class="greeting"><span class="sun">☀️</span> ${data.greeting}!</h1>
-      <div class="date-time">${formatDateLong(new Date())} • ${formatTimeLong(new Date())}</div>
-      ${data.weather ? `
-        <div class="weather-line">
-          ${weatherIcon} <span class="temp">${data.weather.temp}${data.weather.unit}</span> 
-          (feels like ${data.weather.feelsLike}${data.weather.unit}) • ${data.weather.condition}
-        </div>
       ` : ''}
-    </header>
-    
-    ${config.quote?.enabled ? `
-    <div class="quote">
-      <div class="quote-text">"${escapeHtml(data.quote.text)}"</div>
-      <div class="quote-author">— ${escapeHtml(data.quote.author)}</div>
-    </div>
-    ` : ''}
-    
-    <div class="grid">
-      <!-- Tasks -->
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">📋 Tasks</div>
-          <div style="display: flex; gap: 0.5rem;">
-            ${data.tasks.overdue.length > 0 ? `<span class="card-count warning">${data.tasks.overdue.length} overdue</span>` : ''}
-            ${data.tasks.today.length > 0 ? `<span class="card-count">${data.tasks.today.length} today</span>` : ''}
-          </div>
-        </div>
-        <div class="card-body">
-          ${renderTasks()}
-        </div>
-      </div>
-      
-      <!-- Calendar -->
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">📅 Calendar</div>
-          ${totalEvents > 0 ? `<span class="card-count">${totalEvents}</span>` : ''}
-        </div>
-        <div class="card-body">
-          ${renderCalendar()}
-          ${renderFocusBlocks()}
-        </div>
-      </div>
-      
-      <!-- Email -->
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">📧 Inbox</div>
-          ${totalEmails > 0 ? `<span class="card-count">${totalEmails} unread</span>` : ''}
-        </div>
-        <div class="card-body">
-          ${renderEmails()}
-        </div>
-      </div>
-      
-      <!-- GitHub -->
-      ${renderGithub()}
-      
-      <!-- Weather -->
-      ${renderWeather()}
     </div>
     
     <footer class="footer">
-      ${renderSummary()}
-      <div class="refresh-info">
-        Last updated: ${formatTimeLong(new Date())}
-        <button class="refresh-btn" onclick="location.reload()">↻ Refresh</button>
+      ${hasAnything ? `
+      <div class="summary">
+        ${data.tasks.overdue.length > 0 ? `<div class="summary-item"><span class="summary-count destructive">${data.tasks.overdue.length}</span><span class="summary-label">overdue</span></div>` : ''}
+        ${data.tasks.today.length > 0 ? `<div class="summary-item"><span class="summary-count warning">${data.tasks.today.length}</span><span class="summary-label">tasks</span></div>` : ''}
+        ${totalEvents > 0 ? `<div class="summary-item"><span class="summary-count accent">${totalEvents}</span><span class="summary-label">events</span></div>` : ''}
+        ${totalEmails > 0 ? `<div class="summary-item"><span class="summary-count muted">${totalEmails}</span><span class="summary-label">emails</span></div>` : ''}
+        ${totalGithub > 0 ? `<div class="summary-item"><span class="summary-count muted">${totalGithub}</span><span class="summary-label">notifications</span></div>` : ''}
+      </div>
+      ` : `<div class="all-clear">✨ All clear! Have a great day.</div>`}
+      <div class="footer-meta">
+        <span>Updated ${formatTimeLong(new Date())}</span>
+        <button class="refresh-btn" onclick="location.reload()">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1.5 7a5.5 5.5 0 1 0 1.1-3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 1v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Refresh
+        </button>
       </div>
     </footer>
   </div>
