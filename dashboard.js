@@ -894,21 +894,56 @@ function fetchEmails(config) {
   
   return emails.map(e => ({
     id: e.id,
+    threadId: e.threadId,
     from: e.from?.split('<')[0]?.trim() || e.from || 'Unknown',
+    fromFull: e.from || 'Unknown',
+    to: e.to,
     subject: e.subject || '(no subject)',
     date: e.date,
     snippet: e.snippet,
+    labelIds: e.labelIds || [],
+    isUnread: e.labelIds?.includes('UNREAD'),
   }));
 }
 
-function fetchCalendarEvents(config) {
+// Fetch single email details
+function fetchEmail(config, emailId) {
+  const account = config.google?.account;
+  const accountFlag = account ? `--account ${account}` : '';
+  
+  const raw = exec(`gog gmail read ${emailId} ${accountFlag} --json 2>/dev/null`);
+  return parseJSON(raw);
+}
+
+// Mark email as read
+function markEmailAsRead(config, emailId) {
+  const account = config.google?.account;
+  const accountFlag = account ? `--account ${account}` : '';
+  
+  exec(`gog gmail modify ${emailId} --remove-labels UNREAD ${accountFlag} 2>/dev/null`);
+  return { success: true };
+}
+
+function fetchCalendarEvents(config, options = {}) {
   if (!config.calendar?.enabled) return [];
   
   const account = config.google?.account;
   const accountFlag = account ? `--account ${account}` : '';
   
-  const { from, to } = getDateRange(config.calendar.lookaheadDays);
-  const raw = exec(`gog calendar events ${config.calendar.id} --from "${from}" --to "${to}" ${accountFlag} --json 2>/dev/null`);
+  // Get events from past 3 days to future 7 days for a better view
+  const now = new Date();
+  const pastDays = options.pastDays || 3;
+  const futureDays = options.futureDays || 7;
+  
+  const from = new Date(now);
+  from.setDate(from.getDate() - pastDays);
+  from.setHours(0, 0, 0, 0);
+  
+  const to = new Date(now);
+  to.setDate(to.getDate() + futureDays);
+  to.setHours(23, 59, 59, 999);
+  
+  const raw = exec(`gog calendar events ${config.calendar.id} --from "${from.toISOString()}" --to "${to.toISOString()}" ${accountFlag} --json 2>/dev/null`);
   const events = parseJSON(raw);
   if (!events || !Array.isArray(events)) return [];
 
@@ -916,17 +951,27 @@ function fetchCalendarEvents(config) {
     .map(e => ({
       id: e.id,
       summary: e.summary || '(no title)',
+      description: e.description || '',
       start: e.start?.dateTime || e.start?.date,
       end: e.end?.dateTime || e.end?.date,
       location: e.location,
       allDay: !e.start?.dateTime,
       meetLink: e.hangoutLink || e.conferenceData?.entryPoints?.[0]?.uri,
+      attendees: e.attendees || [],
+      organizer: e.organizer,
+      status: e.status,
+      htmlLink: e.htmlLink,
     }))
-    .sort((a, b) => {
-      if (a.allDay && !b.allDay) return -1;
-      if (!a.allDay && b.allDay) return 1;
-      return new Date(a.start) - new Date(b.start);
-    });
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+}
+
+// Fetch single calendar event details
+function fetchCalendarEvent(config, eventId) {
+  const account = config.google?.account;
+  const accountFlag = account ? `--account ${account}` : '';
+  
+  const raw = exec(`gog calendar event ${config.calendar?.id || 'primary'} ${eventId} ${accountFlag} --json 2>/dev/null`);
+  return parseJSON(raw);
 }
 
 function fetchTasks(config) {
@@ -1380,6 +1425,54 @@ function generateHTML(data, config, status) {
     check: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/></svg>',
     pr: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10 9v2.5a1 1 0 01-1 1H5a1 1 0 01-1-1v-7a1 1 0 011-1h4a1 1 0 011 1V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M7 1.5v4M5 3.5l2-2 2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     issue: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="1" fill="currentColor"/></svg>',
+  };
+  
+  // Helper: Render calendar events with date grouping
+  const renderCalendarEvents = (events) => {
+    if (!events || events.length === 0) return '';
+    
+    const now = new Date();
+    const today = new Date().toDateString();
+    const tomorrow = new Date(Date.now() + 86400000).toDateString();
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    
+    let lastDate = '';
+    let html = '';
+    
+    events.forEach((e, i) => {
+      const eventDate = new Date(e.start).toDateString();
+      const isPast = !e.allDay && new Date(e.end) < now;
+      const isNext = !isPast && !e.allDay && events.slice(0, i).every(ev => ev.allDay || new Date(ev.end) < now);
+      
+      // Add date header if new date
+      if (eventDate !== lastDate) {
+        lastDate = eventDate;
+        const d = new Date(e.start);
+        let dateLabel;
+        if (eventDate === today) dateLabel = 'Today';
+        else if (eventDate === tomorrow) dateLabel = 'Tomorrow';
+        else if (eventDate === yesterday) dateLabel = 'Yesterday';
+        else dateLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        html += '<div class="date-group">' + dateLabel + '</div>';
+      }
+      
+      const eventTime = e.allDay ? 'All day' : formatTimeLong(new Date(e.start));
+      
+      html += '<div class="list-item clickable" onclick="openEventDetail(\'' + encodeURIComponent(e.id) + '\')">';
+      html += '  <div class="event-time ' + (e.allDay ? 'all-day' : '') + ' ' + (isPast ? 'past' : '') + '">' + eventTime + '</div>';
+      html += '  <div class="list-item-content">';
+      html += '    <div class="list-item-title ' + (isPast ? 'dimmed' : '') + '">' + escapeHtml(e.summary) + '</div>';
+      if (e.location) {
+        html += '    <div class="list-item-meta">📍 ' + escapeHtml(e.location) + '</div>';
+      }
+      html += '  </div>';
+      if (isNext) {
+        html += '  <span class="list-item-badge list-item-badge-success">Next</span>';
+      }
+      html += '</div>';
+    });
+    
+    return html;
   };
 
   return `<!DOCTYPE html>
@@ -2405,6 +2498,220 @@ function generateHTML(data, config, status) {
       color: var(--success);
     }
     
+    /* Clickable list items */
+    .list-item.clickable {
+      cursor: pointer;
+    }
+    
+    .list-item.clickable:hover .list-item-title {
+      color: var(--accent);
+    }
+    
+    /* Detail Modal */
+    .detail-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      z-index: 150;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .detail-modal.open {
+      display: flex;
+    }
+    
+    .detail-content {
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 600px;
+      max-height: 80vh;
+      overflow: hidden;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.3);
+    }
+    
+    .detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .detail-title {
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 1.4;
+      flex: 1;
+    }
+    
+    .detail-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--foreground-muted);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    
+    .detail-close:hover {
+      background: var(--background-tertiary);
+      color: var(--foreground);
+    }
+    
+    .detail-body {
+      padding: 24px;
+      overflow-y: auto;
+      max-height: calc(80vh - 80px);
+    }
+    
+    .detail-section {
+      margin-bottom: 20px;
+    }
+    
+    .detail-section:last-child {
+      margin-bottom: 0;
+    }
+    
+    .detail-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--foreground-subtle);
+      margin-bottom: 6px;
+    }
+    
+    .detail-value {
+      font-size: 14px;
+      color: var(--foreground);
+      line-height: 1.6;
+    }
+    
+    .detail-value a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    
+    .detail-value a:hover {
+      text-decoration: underline;
+    }
+    
+    .detail-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 16px 0;
+      border-top: 1px solid var(--border);
+      margin-top: 16px;
+    }
+    
+    .detail-meta-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--foreground-muted);
+    }
+    
+    .detail-actions {
+      display: flex;
+      gap: 12px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      margin-top: 16px;
+    }
+    
+    .detail-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 100ms;
+      border: 1px solid var(--border);
+      background: var(--background-tertiary);
+      color: var(--foreground);
+    }
+    
+    .detail-btn:hover {
+      background: var(--background-secondary);
+      border-color: var(--border-hover);
+    }
+    
+    .detail-btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    
+    .detail-btn.primary:hover {
+      opacity: 0.9;
+    }
+    
+    .detail-btn.success {
+      background: var(--success);
+      border-color: var(--success);
+      color: white;
+    }
+    
+    /* Email body */
+    .email-body {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--foreground);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    
+    /* Loading spinner */
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      color: var(--foreground-muted);
+    }
+    
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Date group headers */
+    .date-group {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--foreground-subtle);
+      padding: 12px 20px 8px;
+      background: var(--background-tertiary);
+      border-bottom: 1px solid var(--border);
+    }
+    
     /* Responsive */
     @media (max-width: 840px) {
       .app { padding: 20px 16px; }
@@ -2487,9 +2794,9 @@ function generateHTML(data, config, status) {
             <div class="empty-text">No tasks due today</div>
           </div>
           ` : [...data.tasks.overdue, ...data.tasks.today].map(t => `
-          <div class="list-item" id="task-${t.id}" data-task-id="${t.id}">
-            <div class="list-item-indicator priority-${t.priority}" onclick="completeTask('${t.id}')" title="Mark as complete">${icons.check}</div>
-            <div class="list-item-content">
+          <div class="list-item clickable" id="task-${t.id}" data-task-id="${t.id}">
+            <div class="list-item-indicator priority-${t.priority}" onclick="event.stopPropagation(); completeTask('${t.id}')" title="Mark as complete">${icons.check}</div>
+            <div class="list-item-content" onclick="openTaskDetail('${t.id}')">
               <div class="list-item-title">${escapeHtml(t.content)}</div>
               ${t.due ? `<div class="list-item-meta">${escapeHtml(t.due)}</div>` : ''}
             </div>
@@ -2514,22 +2821,7 @@ function generateHTML(data, config, status) {
             <div class="empty-icon">📅</div>
             <div class="empty-text">No events scheduled</div>
           </div>
-          ` : data.calendar.events.map((e, i) => {
-            const now = new Date();
-            const isPast = !e.allDay && new Date(e.end) < now;
-            const isNext = !isPast && !e.allDay && data.calendar.events.slice(0, i).every(ev => ev.allDay || new Date(ev.end) < now);
-            return `
-            <div class="list-item">
-              <div class="event-time ${e.allDay ? 'all-day' : ''} ${isPast ? 'past' : ''}">${e.allDay ? 'All day' : formatTimeLong(new Date(e.start))}</div>
-              <div class="list-item-content">
-                <div class="list-item-title ${isPast ? 'dimmed' : ''}">${escapeHtml(e.summary)}</div>
-                ${e.location ? `<div class="list-item-meta">📍 ${escapeHtml(e.location)}</div>` : ''}
-                ${e.meetLink ? `<div class="list-item-meta"><a href="${escapeHtml(e.meetLink)}" target="_blank">Join meeting →</a></div>` : ''}
-              </div>
-              ${isNext ? '<span class="list-item-badge list-item-badge-success">Next</span>' : ''}
-            </div>
-            `;
-          }).join('')}
+          ` : renderCalendarEvents(data.calendar.events)}
           ${data.calendar.focusBlocks.length > 0 ? `
           <div class="focus-section">
             <div class="focus-header">
@@ -2564,7 +2856,7 @@ function generateHTML(data, config, status) {
             <div class="empty-text">Inbox zero!</div>
           </div>
           ` : data.email.map(e => `
-          <div class="list-item">
+          <div class="list-item clickable" onclick="openEmailDetail('${e.id}')">
             <div class="list-item-indicator">${icons.mail}</div>
             <div class="list-item-content">
               <div class="list-item-title">${escapeHtml(e.subject)}</div>
@@ -2700,6 +2992,21 @@ function generateHTML(data, config, status) {
     <!-- Toast -->
     <div class="toast" id="toast"></div>
     
+    <!-- Detail Modal -->
+    <div class="detail-modal" id="detailModal">
+      <div class="detail-content">
+        <div class="detail-header">
+          <h2 class="detail-title" id="detailTitle">Loading...</h2>
+          <button class="detail-close" onclick="closeDetail()">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13.5 4.5l-9 9M4.5 4.5l9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" id="detailBody">
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+    
     <script>
       // Show toast notification
       function showToast(message, type = 'success') {
@@ -2707,6 +3014,204 @@ function generateHTML(data, config, status) {
         toast.textContent = message;
         toast.className = 'toast ' + type + ' show';
         setTimeout(() => toast.classList.remove('show'), 3000);
+      }
+      
+      // Detail modal
+      function openDetail() {
+        document.getElementById('detailModal').classList.add('open');
+      }
+      
+      function closeDetail() {
+        document.getElementById('detailModal').classList.remove('open');
+      }
+      
+      // Close on overlay click
+      document.getElementById('detailModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('detail-modal')) closeDetail();
+      });
+      
+      // Open task detail
+      async function openTaskDetail(taskId) {
+        openDetail();
+        document.getElementById('detailTitle').textContent = 'Loading...';
+        document.getElementById('detailBody').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        
+        try {
+          const res = await fetch('/api/task/' + taskId);
+          const task = await res.json();
+          
+          if (task.error) {
+            document.getElementById('detailBody').innerHTML = '<p>Error loading task</p>';
+            return;
+          }
+          
+          document.getElementById('detailTitle').textContent = task.content || 'Task';
+          
+          const priorityLabels = { 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Urgent' };
+          const priorityColors = { 1: 'var(--foreground-subtle)', 2: 'var(--accent)', 3: 'var(--warning)', 4: 'var(--destructive)' };
+          
+          document.getElementById('detailBody').innerHTML = \`
+            \${task.description ? \`
+            <div class="detail-section">
+              <div class="detail-label">Description</div>
+              <div class="detail-value">\${escapeHtmlJS(task.description)}</div>
+            </div>
+            \` : ''}
+            
+            <div class="detail-meta">
+              \${task.due ? \`<div class="detail-meta-item">📅 \${task.due.string || task.due.date}</div>\` : ''}
+              <div class="detail-meta-item" style="color: \${priorityColors[task.priority] || priorityColors[1]}">● \${priorityLabels[task.priority] || 'Normal'} priority</div>
+              \${task.labels?.length ? \`<div class="detail-meta-item">🏷️ \${task.labels.join(', ')}</div>\` : ''}
+            </div>
+            
+            \${task.comments?.length ? \`
+            <div class="detail-section">
+              <div class="detail-label">Comments (\${task.comments.length})</div>
+              \${task.comments.map(c => \`
+                <div style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                  <div class="detail-value">\${escapeHtmlJS(c.content)}</div>
+                  <div style="font-size: 12px; color: var(--foreground-subtle); margin-top: 4px;">\${new Date(c.posted_at).toLocaleString()}</div>
+                </div>
+              \`).join('')}
+            </div>
+            \` : ''}
+            
+            <div class="detail-actions">
+              <button class="detail-btn success" onclick="completeTaskFromDetail('\${taskId}')">✓ Complete</button>
+              <a href="https://todoist.com/app/task/\${taskId}" target="_blank" class="detail-btn">Open in Todoist →</a>
+            </div>
+          \`;
+        } catch (e) {
+          document.getElementById('detailBody').innerHTML = '<p>Error loading task</p>';
+        }
+      }
+      
+      async function completeTaskFromDetail(taskId) {
+        closeDetail();
+        await completeTask(taskId);
+      }
+      
+      // Open event detail
+      async function openEventDetail(eventId) {
+        openDetail();
+        document.getElementById('detailTitle').textContent = 'Loading...';
+        document.getElementById('detailBody').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        
+        try {
+          const res = await fetch('/api/event/' + eventId);
+          const event = await res.json();
+          
+          if (event.error) {
+            document.getElementById('detailBody').innerHTML = '<p>Error loading event</p>';
+            return;
+          }
+          
+          document.getElementById('detailTitle').textContent = event.summary || 'Event';
+          
+          const start = new Date(event.start?.dateTime || event.start?.date);
+          const end = new Date(event.end?.dateTime || event.end?.date);
+          const isAllDay = !event.start?.dateTime;
+          
+          document.getElementById('detailBody').innerHTML = \`
+            \${event.description ? \`
+            <div class="detail-section">
+              <div class="detail-label">Description</div>
+              <div class="detail-value">\${escapeHtmlJS(event.description)}</div>
+            </div>
+            \` : ''}
+            
+            <div class="detail-section">
+              <div class="detail-label">When</div>
+              <div class="detail-value">
+                \${isAllDay ? start.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) + ' (All day)' :
+                  start.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) + '<br>' +
+                  start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' – ' +
+                  end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                }
+              </div>
+            </div>
+            
+            \${event.location ? \`
+            <div class="detail-section">
+              <div class="detail-label">Location</div>
+              <div class="detail-value">📍 \${escapeHtmlJS(event.location)}</div>
+            </div>
+            \` : ''}
+            
+            \${event.attendees?.length ? \`
+            <div class="detail-section">
+              <div class="detail-label">Attendees (\${event.attendees.length})</div>
+              <div class="detail-value">\${event.attendees.map(a => a.email + (a.responseStatus === 'accepted' ? ' ✓' : a.responseStatus === 'declined' ? ' ✗' : '')).join('<br>')}</div>
+            </div>
+            \` : ''}
+            
+            <div class="detail-actions">
+              \${event.hangoutLink ? \`<a href="\${event.hangoutLink}" target="_blank" class="detail-btn primary">Join Meeting →</a>\` : ''}
+              \${event.htmlLink ? \`<a href="\${event.htmlLink}" target="_blank" class="detail-btn">Open in Calendar →</a>\` : ''}
+            </div>
+          \`;
+        } catch (e) {
+          document.getElementById('detailBody').innerHTML = '<p>Error loading event</p>';
+        }
+      }
+      
+      // Open email detail
+      async function openEmailDetail(emailId) {
+        openDetail();
+        document.getElementById('detailTitle').textContent = 'Loading...';
+        document.getElementById('detailBody').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        
+        try {
+          const res = await fetch('/api/email/' + emailId);
+          const email = await res.json();
+          
+          if (email.error) {
+            document.getElementById('detailBody').innerHTML = '<p>Error loading email</p>';
+            return;
+          }
+          
+          document.getElementById('detailTitle').textContent = email.subject || '(no subject)';
+          
+          // Mark as read
+          fetch('/api/email/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailId })
+          });
+          
+          const date = email.date ? new Date(email.date) : null;
+          
+          document.getElementById('detailBody').innerHTML = \`
+            <div class="detail-section">
+              <div class="detail-meta" style="margin-top: 0; padding-top: 0; border-top: none;">
+                <div class="detail-meta-item"><strong>From:</strong> \${escapeHtmlJS(email.from || 'Unknown')}</div>
+                \${email.to ? \`<div class="detail-meta-item"><strong>To:</strong> \${escapeHtmlJS(email.to)}</div>\` : ''}
+                \${date ? \`<div class="detail-meta-item">\${date.toLocaleString()}</div>\` : ''}
+              </div>
+            </div>
+            
+            <div class="detail-section">
+              <div class="email-body">\${escapeHtmlJS(email.body || email.snippet || 'No content')}</div>
+            </div>
+            
+            <div class="detail-actions">
+              <a href="https://mail.google.com/mail/u/0/#inbox/\${emailId}" target="_blank" class="detail-btn primary">Open in Gmail →</a>
+            </div>
+          \`;
+        } catch (e) {
+          document.getElementById('detailBody').innerHTML = '<p>Error loading email</p>';
+        }
+      }
+      
+      // HTML escape for JS
+      function escapeHtmlJS(str) {
+        if (!str) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/\\n/g, '<br>');
       }
       
       // Complete task
@@ -3042,6 +3547,67 @@ function startGUIServer(config, port) {
       }
       
       const result = await completeTask(body.taskId);
+      res.end(JSON.stringify(result));
+    }
+    // API: Reopen task
+    else if (req.url === '/api/task/reopen' && req.method === 'POST') {
+      res.setHeader('Content-Type', 'application/json');
+      const body = await parseBody(req);
+      const token = config.todoist?.apiToken || process.env.TODOIST_API_TOKEN;
+      
+      if (!body.taskId || !token) {
+        res.end(JSON.stringify({ success: false, error: 'Missing taskId or token' }));
+        return;
+      }
+      
+      exec(`curl -s -X POST -H "Authorization: Bearer ${token}" "https://api.todoist.com/rest/v2/tasks/${body.taskId}/reopen" 2>/dev/null`);
+      res.end(JSON.stringify({ success: true }));
+    }
+    // API: Get single task details
+    else if (req.url.startsWith('/api/task/') && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      const taskId = req.url.split('/api/task/')[1];
+      const token = config.todoist?.apiToken || process.env.TODOIST_API_TOKEN;
+      
+      if (!token) {
+        res.end(JSON.stringify({ error: 'No API token' }));
+        return;
+      }
+      
+      const raw = exec(`curl -s -H "Authorization: Bearer ${token}" "https://api.todoist.com/rest/v2/tasks/${taskId}" 2>/dev/null`);
+      const task = parseJSON(raw);
+      
+      // Also get comments
+      const commentsRaw = exec(`curl -s -H "Authorization: Bearer ${token}" "https://api.todoist.com/rest/v2/comments?task_id=${taskId}" 2>/dev/null`);
+      const comments = parseJSON(commentsRaw) || [];
+      
+      res.end(JSON.stringify({ ...task, comments }));
+    }
+    // API: Get calendar event details
+    else if (req.url.startsWith('/api/event/') && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      const eventId = decodeURIComponent(req.url.split('/api/event/')[1]);
+      const event = fetchCalendarEvent(config, eventId);
+      res.end(JSON.stringify(event || { error: 'Event not found' }));
+    }
+    // API: Get email details
+    else if (req.url.startsWith('/api/email/') && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      const emailId = req.url.split('/api/email/')[1];
+      const email = fetchEmail(config, emailId);
+      res.end(JSON.stringify(email || { error: 'Email not found' }));
+    }
+    // API: Mark email as read
+    else if (req.url === '/api/email/read' && req.method === 'POST') {
+      res.setHeader('Content-Type', 'application/json');
+      const body = await parseBody(req);
+      
+      if (!body.emailId) {
+        res.end(JSON.stringify({ success: false, error: 'Missing emailId' }));
+        return;
+      }
+      
+      const result = markEmailAsRead(config, body.emailId);
       res.end(JSON.stringify(result));
     }
     // Setup page
