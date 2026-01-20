@@ -1,0 +1,26 @@
+{
+  "name": "morning-dashboard",
+  "version": "1.0.0",
+  "description": "A lightweight morning productivity dashboard aggregating email, calendar, and tasks",
+  "main": "dashboard.js",
+  "bin": {
+    "morning-dashboard": "./dashboard.js"
+  },
+  "scripts": {
+    "start": "node dashboard.js",
+    "test": "node dashboard.js --dry-run"
+  },
+  "keywords": [
+    "productivity",
+    "dashboard",
+    "gmail",
+    "calendar",
+    "todoist",
+    "morning-routine"
+  ],
+  "author": "Andrei Suslov <truvord@gmail.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
