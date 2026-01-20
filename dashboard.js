@@ -1995,6 +1995,211 @@ function generateHTML(data, config, status) {
       border-color: var(--border-hover);
     }
     
+    /* Interactive tasks */
+    .list-item-indicator {
+      cursor: pointer;
+      transition: transform 100ms, opacity 100ms;
+    }
+    
+    .list-item-indicator:hover {
+      transform: scale(1.2);
+      opacity: 0.8;
+    }
+    
+    .list-item.completing {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    
+    .list-item.completed {
+      opacity: 0.3;
+      text-decoration: line-through;
+    }
+    
+    /* Settings button */
+    .settings-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      background: var(--background-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      color: var(--foreground-muted);
+      transition: all 100ms;
+    }
+    
+    .settings-btn:hover {
+      background: var(--background-secondary);
+      color: var(--foreground);
+    }
+    
+    /* Settings Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .modal-overlay.open {
+      display: flex;
+    }
+    
+    .modal {
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 90%;
+      max-width: 480px;
+      max-height: 90vh;
+      overflow: hidden;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.25);
+    }
+    
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .modal-title {
+      font-size: 18px;
+      font-weight: 600;
+    }
+    
+    .modal-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--foreground-muted);
+      border-radius: var(--radius);
+      transition: background 100ms;
+    }
+    
+    .modal-close:hover {
+      background: var(--background-tertiary);
+      color: var(--foreground);
+    }
+    
+    .modal-body {
+      padding: 24px;
+      overflow-y: auto;
+    }
+    
+    .setting-group {
+      margin-bottom: 24px;
+    }
+    
+    .setting-group:last-child {
+      margin-bottom: 0;
+    }
+    
+    .setting-label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: var(--foreground);
+    }
+    
+    .setting-description {
+      font-size: 13px;
+      color: var(--foreground-subtle);
+      margin-bottom: 12px;
+    }
+    
+    /* Toggle switch */
+    .toggle-group {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .toggle-option {
+      flex: 1;
+      padding: 10px 16px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 500;
+      background: var(--background-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 100ms;
+      color: var(--foreground-muted);
+    }
+    
+    .toggle-option:hover {
+      border-color: var(--border-hover);
+    }
+    
+    .toggle-option.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    
+    /* Input */
+    .setting-input {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      background: var(--background-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--foreground);
+      outline: none;
+      transition: border-color 100ms;
+    }
+    
+    .setting-input:focus {
+      border-color: var(--accent);
+    }
+    
+    .setting-input::placeholder {
+      color: var(--foreground-subtle);
+    }
+    
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      padding: 12px 20px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      z-index: 200;
+      opacity: 0;
+      transition: all 300ms ease;
+    }
+    
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    
+    .toast.success {
+      border-color: var(--success);
+      color: var(--success);
+    }
+    
     /* Responsive */
     @media (max-width: 840px) {
       .app { padding: 20px 16px; }
@@ -2019,7 +2224,12 @@ function generateHTML(data, config, status) {
     ` : ''}
     
     <header class="header">
-      <h1 class="header-greeting"><span>☀️</span> ${data.greeting}</h1>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 16px;">
+        <h1 class="header-greeting"><span>☀️</span> ${data.greeting}</h1>
+        <button class="settings-btn" onclick="openSettings()" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" stroke="currentColor" stroke-width="1.5"/><path d="M14.55 11.25a1.2 1.2 0 00.24 1.32l.04.04a1.46 1.46 0 11-2.06 2.06l-.04-.04a1.2 1.2 0 00-1.32-.24 1.2 1.2 0 00-.73 1.1v.11a1.46 1.46 0 01-2.91 0v-.06a1.2 1.2 0 00-.79-1.1 1.2 1.2 0 00-1.32.24l-.04.04a1.46 1.46 0 11-2.06-2.06l.04-.04a1.2 1.2 0 00.24-1.32 1.2 1.2 0 00-1.1-.73h-.11a1.46 1.46 0 010-2.91h.06a1.2 1.2 0 001.1-.79 1.2 1.2 0 00-.24-1.32l-.04-.04a1.46 1.46 0 112.06-2.06l.04.04a1.2 1.2 0 001.32.24h.06a1.2 1.2 0 00.73-1.1v-.11a1.46 1.46 0 012.91 0v.06a1.2 1.2 0 00.73 1.1 1.2 1.2 0 001.32-.24l.04-.04a1.46 1.46 0 112.06 2.06l-.04.04a1.2 1.2 0 00-.24 1.32v.06a1.2 1.2 0 001.1.73h.11a1.46 1.46 0 010 2.91h-.06a1.2 1.2 0 00-1.1.73z" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+      </div>
       <div class="header-meta">
         <span>${formatDateLong(new Date())}</span>
         <span class="header-separator"></span>
@@ -2055,8 +2265,8 @@ function generateHTML(data, config, status) {
             <div class="empty-text">No tasks due today</div>
           </div>
           ` : [...data.tasks.overdue, ...data.tasks.today].map(t => `
-          <div class="list-item">
-            <div class="list-item-indicator priority-${t.priority}">${icons.check}</div>
+          <div class="list-item" id="task-${t.id}" data-task-id="${t.id}">
+            <div class="list-item-indicator priority-${t.priority}" onclick="completeTask('${t.id}')" title="Mark as complete">${icons.check}</div>
             <div class="list-item-content">
               <div class="list-item-title">${escapeHtml(t.content)}</div>
               ${t.due ? `<div class="list-item-meta">${escapeHtml(t.due)}</div>` : ''}
@@ -2227,7 +2437,190 @@ function generateHTML(data, config, status) {
     </footer>
   </div>
   
-  ${config.gui?.autoRefresh ? `<script>setTimeout(() => location.reload(), ${(config.gui.refreshInterval || 300) * 1000});</script>` : ''}
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Settings</h2>
+          <button class="modal-close" onclick="closeSettings()">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13.5 4.5l-9 9M4.5 4.5l9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label class="setting-label">Temperature Units</label>
+            <p class="setting-description">Choose between Fahrenheit and Celsius</p>
+            <div class="toggle-group">
+              <button class="toggle-option ${config.weather?.units === 'imperial' ? 'active' : ''}" onclick="setWeatherUnits('imperial')">°F Fahrenheit</button>
+              <button class="toggle-option ${config.weather?.units === 'metric' ? 'active' : ''}" onclick="setWeatherUnits('metric')">°C Celsius</button>
+            </div>
+          </div>
+          
+          <div class="setting-group">
+            <label class="setting-label">Weather Location</label>
+            <p class="setting-description">City name, ZIP code, or leave empty for auto-detect</p>
+            <input type="text" class="setting-input" id="weatherLocation" placeholder="e.g., New York, 10001, or auto" value="${config.weather?.location || ''}">
+            <button style="margin-top: 8px; padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500;" onclick="saveLocation()">Save Location</button>
+          </div>
+          
+          <div class="setting-group">
+            <label class="setting-label">Auto Refresh</label>
+            <p class="setting-description">Automatically refresh data every 5 minutes</p>
+            <div class="toggle-group">
+              <button class="toggle-option ${config.gui?.autoRefresh !== false ? 'active' : ''}" onclick="setAutoRefresh(true)">On</button>
+              <button class="toggle-option ${config.gui?.autoRefresh === false ? 'active' : ''}" onclick="setAutoRefresh(false)">Off</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+    
+    <script>
+      // Show toast notification
+      function showToast(message, type = 'success') {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast ' + type + ' show';
+        setTimeout(() => toast.classList.remove('show'), 3000);
+      }
+      
+      // Complete task
+      async function completeTask(taskId) {
+        const taskEl = document.getElementById('task-' + taskId);
+        if (!taskEl) return;
+        
+        taskEl.classList.add('completing');
+        
+        try {
+          const res = await fetch('/api/task/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId })
+          });
+          
+          const data = await res.json();
+          
+          if (data.success) {
+            taskEl.classList.remove('completing');
+            taskEl.classList.add('completed');
+            showToast('Task completed!');
+            
+            // Remove after animation
+            setTimeout(() => {
+              taskEl.style.height = taskEl.offsetHeight + 'px';
+              taskEl.style.transition = 'all 300ms';
+              requestAnimationFrame(() => {
+                taskEl.style.height = '0';
+                taskEl.style.padding = '0';
+                taskEl.style.margin = '0';
+                taskEl.style.opacity = '0';
+              });
+              setTimeout(() => taskEl.remove(), 300);
+            }, 500);
+          } else {
+            taskEl.classList.remove('completing');
+            showToast('Failed to complete task', 'error');
+          }
+        } catch (e) {
+          taskEl.classList.remove('completing');
+          showToast('Error completing task', 'error');
+        }
+      }
+      
+      // Settings modal
+      function openSettings() {
+        document.getElementById('settingsModal').classList.add('open');
+      }
+      
+      function closeSettings() {
+        document.getElementById('settingsModal').classList.remove('open');
+      }
+      
+      // Close modal on overlay click
+      document.getElementById('settingsModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) closeSettings();
+      });
+      
+      // Close modal on Escape
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeSettings();
+      });
+      
+      // Weather units
+      async function setWeatherUnits(units) {
+        try {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ weather: { units } })
+          });
+          
+          if (res.ok) {
+            // Update UI
+            document.querySelectorAll('.toggle-group').forEach((group, i) => {
+              if (i === 0) { // First toggle group is units
+                group.querySelectorAll('.toggle-option').forEach(opt => {
+                  opt.classList.toggle('active', opt.textContent.includes(units === 'imperial' ? 'Fahrenheit' : 'Celsius'));
+                });
+              }
+            });
+            showToast('Settings saved! Refreshing...');
+            setTimeout(() => location.reload(), 1000);
+          }
+        } catch (e) {
+          showToast('Failed to save settings', 'error');
+        }
+      }
+      
+      // Save location
+      async function saveLocation() {
+        const location = document.getElementById('weatherLocation').value;
+        
+        try {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ weather: { location } })
+          });
+          
+          if (res.ok) {
+            showToast('Location saved! Refreshing...');
+            setTimeout(() => location.reload(), 1000);
+          }
+        } catch (e) {
+          showToast('Failed to save location', 'error');
+        }
+      }
+      
+      // Auto refresh toggle
+      async function setAutoRefresh(enabled) {
+        try {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gui: { autoRefresh: enabled } })
+          });
+          
+          if (res.ok) {
+            document.querySelectorAll('.toggle-group').forEach((group, i) => {
+              if (i === 2) { // Third toggle group is auto-refresh
+                group.querySelectorAll('.toggle-option').forEach((opt, j) => {
+                  opt.classList.toggle('active', (j === 0) === enabled);
+                });
+              }
+            });
+            showToast('Settings saved!');
+          }
+        } catch (e) {
+          showToast('Failed to save settings', 'error');
+        }
+      }
+      
+      ${config.gui?.autoRefresh !== false ? `setTimeout(() => location.reload(), ${(config.gui?.refreshInterval || 300) * 1000});` : ''}
+    </script>
 </body>
 </html>`;
 }
@@ -2344,21 +2737,98 @@ function getWeatherIconEmoji(condition) {
 }
 
 function startGUIServer(config, port) {
-  const server = http.createServer((req, res) => {
+  // Helper to parse POST body
+  const parseBody = (req) => new Promise((resolve) => {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)); } catch { resolve({}); }
+    });
+  });
+  
+  // Helper to complete a task via Todoist API
+  const completeTask = async (taskId) => {
+    const token = config.todoist?.apiToken || process.env.TODOIST_API_TOKEN;
+    if (!token) return { success: false, error: 'No API token' };
+    
+    const result = exec(`curl -s -X POST -H "Authorization: Bearer ${token}" "https://api.todoist.com/rest/v2/tasks/${taskId}/close" 2>/dev/null`);
+    return { success: true };
+  };
+  
+  const server = http.createServer(async (req, res) => {
     const status = getIntegrationStatus(config);
     
-    if (req.url === '/api/data') {
+    // CORS headers for all requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    
+    // API: Get data
+    if (req.url === '/api/data' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
       const data = fetchAllData(config);
-      res.end(JSON.stringify({ ...data, status }));
-    } else if (req.url === '/api/status') {
+      res.end(JSON.stringify({ ...data, status, config: { weather: config.weather } }));
+    }
+    // API: Get status
+    else if (req.url === '/api/status' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify(status));
-    } else if (req.url === '/setup') {
+    }
+    // API: Get settings
+    else if (req.url === '/api/settings' && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        weather: config.weather || {},
+        display: config.display || {},
+      }));
+    }
+    // API: Save settings
+    else if (req.url === '/api/settings' && req.method === 'POST') {
+      res.setHeader('Content-Type', 'application/json');
+      const body = await parseBody(req);
+      
+      // Update config
+      if (body.weather) {
+        config.weather = { ...config.weather, ...body.weather };
+      }
+      if (body.display) {
+        config.display = { ...config.display, ...body.display };
+      }
+      if (body.gui) {
+        config.gui = { ...config.gui, ...body.gui };
+      }
+      
+      // Save to file
+      saveConfig(config);
+      
+      res.end(JSON.stringify({ success: true, config: { weather: config.weather, display: config.display, gui: config.gui } }));
+    }
+    // API: Complete task
+    else if (req.url === '/api/task/complete' && req.method === 'POST') {
+      res.setHeader('Content-Type', 'application/json');
+      const body = await parseBody(req);
+      
+      if (!body.taskId) {
+        res.end(JSON.stringify({ success: false, error: 'Missing taskId' }));
+        return;
+      }
+      
+      const result = await completeTask(body.taskId);
+      res.end(JSON.stringify(result));
+    }
+    // Setup page
+    else if (req.url === '/setup') {
       res.setHeader('Content-Type', 'text/html');
       res.end(generateSetupHTML(status, config));
-    } else {
+    }
+    // Main dashboard
+    else {
       res.setHeader('Content-Type', 'text/html');
       const data = fetchAllData(config);
       res.end(generateHTML(data, config, status));
