@@ -62,7 +62,7 @@ const DEFAULT_CONFIG = {
   weather: {
     enabled: true,
     location: '',
-    units: 'imperial',
+    units: 'metric',
   },
   quote: {
     enabled: true,
@@ -1501,9 +1501,210 @@ function generateHTML(data, config, status) {
       color: var(--foreground);
       line-height: 1.5;
       min-height: 100vh;
+      overflow-x: hidden;
+    }
+    
+    /* Landscape Background */
+    .landscape {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 45vh;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    
+    .landscape-layer {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+    }
+    
+    /* Sun */
+    .sun {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(243,83,102,1);
+      transition: all 1s ease;
+    }
+    
+    html.morning .sun {
+      width: 80px;
+      height: 80px;
+      bottom: 30%;
+      left: 10%;
+      opacity: 0.9;
+      box-shadow: 0 0 60px rgba(243,83,102,0.5);
+    }
+    
+    html.noon .sun {
+      width: 100px;
+      height: 100px;
+      bottom: 60%;
+      left: 50%;
+      transform: translateX(-50%);
+      opacity: 1;
+      box-shadow: 0 0 80px rgba(243,83,102,0.6);
+    }
+    
+    html.evening .sun {
+      width: 90px;
+      height: 90px;
+      bottom: 20%;
+      right: 15%;
+      left: auto;
+      opacity: 0.85;
+      box-shadow: 0 0 100px rgba(243,83,102,0.7);
+    }
+    
+    html.night .sun {
+      width: 60px;
+      height: 60px;
+      bottom: -100px;
+      opacity: 0;
+    }
+    
+    /* Mountains - Back Layer */
+    .mountains-back {
+      height: 35vh;
+      background: linear-gradient(135deg, rgba(140,202,202,0.6) 0%, rgba(255,255,255,0.4) 100%);
+      clip-path: polygon(
+        0% 100%,
+        0% 60%,
+        5% 55%,
+        12% 40%,
+        20% 50%,
+        28% 35%,
+        35% 45%,
+        42% 30%,
+        50% 42%,
+        58% 28%,
+        65% 38%,
+        72% 25%,
+        80% 40%,
+        88% 32%,
+        95% 45%,
+        100% 50%,
+        100% 100%
+      );
+    }
+    
+    html.night .mountains-back {
+      background: linear-gradient(135deg, rgba(16,24,84,0.4) 0%, rgba(8,91,144,0.3) 100%);
+    }
+    
+    /* Mountains - Mid Layer */
+    .mountains-mid {
+      height: 28vh;
+      background: linear-gradient(145deg, rgba(140,202,202,0.8) 0%, rgba(200,230,230,0.6) 50%, rgba(255,255,255,0.5) 100%);
+      clip-path: polygon(
+        0% 100%,
+        0% 70%,
+        8% 55%,
+        15% 65%,
+        25% 45%,
+        35% 60%,
+        45% 40%,
+        55% 55%,
+        65% 38%,
+        75% 52%,
+        85% 42%,
+        92% 55%,
+        100% 48%,
+        100% 100%
+      );
+      filter: drop-shadow(0 -5px 20px rgba(255,255,255,0.3));
+    }
+    
+    html.night .mountains-mid {
+      background: linear-gradient(145deg, rgba(8,91,144,0.5) 0%, rgba(16,24,84,0.4) 100%);
+      filter: drop-shadow(0 -5px 15px rgba(0,0,0,0.2));
+    }
+    
+    /* Mountains - Front Layer */
+    .mountains-front {
+      height: 20vh;
+      background: linear-gradient(160deg, rgba(8,91,144,1) 0%, rgba(16,24,84,1) 100%);
+      clip-path: polygon(
+        0% 100%,
+        0% 80%,
+        10% 60%,
+        20% 75%,
+        30% 55%,
+        40% 70%,
+        50% 50%,
+        60% 65%,
+        70% 48%,
+        80% 62%,
+        90% 52%,
+        100% 68%,
+        100% 100%
+      );
+    }
+    
+    html.evening .mountains-front {
+      background: linear-gradient(160deg, rgba(8,91,144,0.9) 0%, rgba(16,24,84,0.95) 100%);
+    }
+    
+    html.night .mountains-front {
+      background: linear-gradient(160deg, rgba(16,24,84,1) 0%, rgba(8,20,50,1) 100%);
+    }
+    
+    /* Trees */
+    .trees {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      height: 18vh;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-around;
+      padding: 0 5%;
+    }
+    
+    .tree {
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-color: transparent transparent rgba(16,24,84,1) transparent;
+      position: relative;
+    }
+    
+    .tree::before,
+    .tree::after {
+      content: '';
+      position: absolute;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-color: transparent transparent rgba(16,24,84,1) transparent;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    
+    .tree-1 { border-width: 0 15px 50px 15px; }
+    .tree-1::before { border-width: 0 12px 40px 12px; bottom: -35px; }
+    .tree-1::after { border-width: 0 9px 30px 9px; bottom: -20px; }
+    
+    .tree-2 { border-width: 0 20px 65px 20px; }
+    .tree-2::before { border-width: 0 16px 52px 16px; bottom: -45px; }
+    .tree-2::after { border-width: 0 12px 39px 12px; bottom: -25px; }
+    
+    .tree-3 { border-width: 0 12px 40px 12px; }
+    .tree-3::before { border-width: 0 10px 32px 10px; bottom: -28px; }
+    .tree-3::after { border-width: 0 7px 24px 7px; bottom: -16px; }
+    
+    html.night .tree,
+    html.night .tree::before,
+    html.night .tree::after {
+      border-color: transparent transparent rgba(8,20,50,1) transparent;
     }
     
     .app {
+      position: relative;
+      z-index: 1;
       max-width: 1400px;
       margin: 0 auto;
       padding: 32px 24px;
@@ -1627,14 +1828,18 @@ function generateHTML(data, config, status) {
     /* Card */
     .card {
       background: var(--background-secondary);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       overflow: hidden;
-      transition: border-color 150ms, box-shadow 150ms;
+      transition: border-color 150ms, box-shadow 150ms, transform 150ms;
+      box-shadow: var(--card-shadow);
     }
     
     .card:hover {
       border-color: var(--border-hover);
+      transform: translateY(-2px);
     }
     
     .card-header {
@@ -2211,6 +2416,23 @@ function generateHTML(data, config, status) {
   </style>
 </head>
 <body>
+  <!-- Landscape Background -->
+  <div class="landscape">
+    <div class="sun"></div>
+    <div class="landscape-layer mountains-back"></div>
+    <div class="landscape-layer mountains-mid"></div>
+    <div class="landscape-layer mountains-front"></div>
+    <div class="trees">
+      <div class="tree tree-3"></div>
+      <div class="tree tree-1"></div>
+      <div class="tree tree-2"></div>
+      <div class="tree tree-3"></div>
+      <div class="tree tree-1"></div>
+      <div class="tree tree-2"></div>
+      <div class="tree tree-3"></div>
+    </div>
+  </div>
+  
   <div class="app">
     ${showSetup ? `
     <div class="banner">
