@@ -1,6 +1,6 @@
 # ☀️ Morning Dashboard
 
-A lightweight, terminal-based morning productivity dashboard that aggregates your tasks, calendar, emails, weather, and more into a single beautiful view.
+A lightweight morning productivity dashboard that aggregates your tasks, calendar, emails, weather, and more into a single beautiful view — available as both a **terminal CLI** and a **web GUI**.
 
 ```
   ☀️  Good morning!
@@ -63,8 +63,9 @@ A lightweight, terminal-based morning productivity dashboard that aggregates you
 | **🐙 GitHub** | Unread notifications (PRs, issues, releases) |
 | **⏰ Focus Time** | Suggested focus blocks based on calendar gaps |
 | **🔋 System** | Battery warnings when low |
+| **🖥️ Web GUI** | Beautiful browser-based dashboard with `mdash gui` |
 | **⚙️ Configurable** | JSON config file + CLI flags |
-| **📦 Lightweight** | Pure Node.js, no dependencies |
+| **📦 Lightweight** | Pure Node.js, zero dependencies |
 
 ## 📋 Prerequisites
 
@@ -117,6 +118,8 @@ source ~/.zshrc
 
 ## 📖 Usage
 
+### Terminal Mode
+
 ```bash
 # Run the full dashboard
 mdash
@@ -143,14 +146,30 @@ mdash --no-color
 # Use custom config
 mdash --config /path/to/config.json
 
-# Help
+# Help & version
 mdash --help
-mdash -h
-
-# Version
 mdash --version
-mdash -v
 ```
+
+### Web GUI Mode
+
+```bash
+# Launch web dashboard (opens browser automatically)
+mdash gui
+
+# Use custom port
+mdash gui --port 8080
+mdash gui -p 8080
+```
+
+The web GUI features:
+- 🌓 **Auto dark/light mode** based on system preference
+- 🔄 **Auto-refresh** every 5 minutes (configurable)
+- 📱 **Responsive design** works on mobile
+- 🔗 **Clickable meeting links** in calendar events
+- 🎨 **Beautiful cards** with smooth animations
+
+**API Endpoint:** `http://localhost:3141/api/data` returns JSON for custom integrations.
 
 ## ⚙️ Configuration
 
@@ -277,6 +296,15 @@ Create a config file at one of these locations (in order of priority):
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable system health checks |
 | `showBattery` | boolean | `true` | Show battery warning if low |
+
+#### GUI (`gui`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `port` | number | `3141` | Web server port |
+| `autoRefresh` | boolean | `true` | Auto-refresh the page |
+| `refreshInterval` | number | `300` | Refresh interval in seconds |
+| `theme` | string | `"auto"` | `"auto"`, `"light"`, or `"dark"` |
 
 #### Display (`display`)
 

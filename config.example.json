@@ -32,6 +32,12 @@
     "enabled": true,
     "showBattery": true
   },
+  "gui": {
+    "port": 3141,
+    "autoRefresh": true,
+    "refreshInterval": 300,
+    "theme": "auto"
+  },
   "display": {
     "width": 80,
     "maxTasksShown": 12,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Morning Dashboard v2.0
+ * Morning Dashboard v2.1
  * A comprehensive morning productivity dashboard
  * 
  * Features:
@@ -13,17 +13,19 @@
  * - GitHub notifications
  * - Focus time suggestions
  * - System health (battery)
+ * - Web GUI mode
  * - Configurable via file or CLI flags
  */
 
-const { execSync, spawnSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const http = require('http');
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 // ─── Default Configuration ───────────────────────────────────────────────────
 
@@ -47,8 +49,8 @@ const DEFAULT_CONFIG = {
   },
   weather: {
     enabled: true,
-    location: '', // Auto-detect if empty
-    units: 'imperial', // 'metric' or 'imperial'
+    location: '',
+    units: 'imperial',
   },
   quote: {
     enabled: true,
@@ -60,6 +62,12 @@ const DEFAULT_CONFIG = {
   system: {
     enabled: true,
     showBattery: true,
+  },
+  gui: {
+    port: 3141,
+    autoRefresh: true,
+    refreshInterval: 300, // seconds
+    theme: 'auto', // 'light', 'dark', 'auto'
   },
   display: {
     width: 80,
@@ -120,6 +128,8 @@ function parseArgs() {
     noColor: false,
     sections: [],
     configPath: null,
+    gui: false,
+    port: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -170,6 +180,16 @@ function parseArgs() {
       case '--github':
         options.sections.push('github');
         break;
+      case 'gui':
+      case '--gui':
+        options.gui = true;
+        break;
+      case '-p':
+      case '--port':
+        if (args[i + 1]) {
+          options.port = parseInt(args[++i], 10);
+        }
+        break;
     }
   }
 
@@ -181,6 +201,7 @@ function showHelp() {
 ☀️  Morning Dashboard v${VERSION}
 
 Usage: mdash [options]
+       mdash gui [--port <port>]
 
 Options:
   -h, --help          Show this help message
@@ -198,6 +219,10 @@ Section filters (show only specific sections):
   --github            Show only GitHub notifications
   -s, --section <name>  Show specific section (repeatable)
 
+GUI mode:
+  gui                 Launch web dashboard in browser
+  --port, -p <port>   Server port (default: 3141)
+
 Configuration:
   Config file locations (in order of priority):
     ~/.config/morning-dashboard/config.json
@@ -209,6 +234,8 @@ Examples:
   mdash --compact          Compact view
   mdash --tasks --calendar Tasks and calendar only
   mdash --json             JSON output for scripting
+  mdash gui                Open web dashboard
+  mdash gui --port 8080    Open on custom port
 `);
 }
 
@@ -350,14 +377,6 @@ function box(title, content, color = c.cyan, config) {
   return output;
 }
 
-function compactSection(icon, title, items, config) {
-  const w = config.display.width;
-  let output = `${c.bold}${icon} ${title}${c.reset}\n`;
-  output += `${c.dim}${'─'.repeat(w)}${c.reset}\n`;
-  output += items.join('\n');
-  return output;
-}
-
 function divider(config, char = '─') {
   return `${c.dim}${char.repeat(config.display.width)}${c.reset}`;
 }
@@ -398,7 +417,6 @@ const QUOTES = [
 ];
 
 function getDailyQuote() {
-  // Use day of year as seed for consistent daily quote
   const now = new Date();
   const start = new Date(now.getFullYear(), 0, 0);
   const diff = now - start;
@@ -454,15 +472,12 @@ function fetchTasks(config) {
   
   const cli = config.todoist.cliPath;
   
-  // Fetch today's tasks
   const todayRaw = exec(`"${cli}" today 2>/dev/null`);
   const todayTasks = parseJSON(todayRaw) || [];
   
-  // Fetch overdue tasks
   const overdueRaw = exec(`"${cli}" overdue 2>/dev/null`);
   const overdueTasks = parseJSON(overdueRaw) || [];
   
-  // Fetch upcoming tasks
   let upcomingTasks = [];
   if (config.todoist.showUpcoming) {
     const upcomingRaw = exec(`"${cli}" upcoming 2>/dev/null`);
@@ -481,7 +496,6 @@ function fetchTasks(config) {
     isOverdue,
   });
 
-  // Deduplicate
   const seen = new Set();
   const dedup = (tasks, isOverdue = false) => {
     const result = [];
@@ -498,7 +512,6 @@ function fetchTasks(config) {
     overdue: dedup(overdueTasks, true),
     today: dedup(todayTasks),
     upcoming: dedup(upcomingTasks.filter(t => {
-      // Filter out today's tasks from upcoming
       if (!t.due?.date) return true;
       const today = new Date().toISOString().split('T')[0];
       return t.due.date > today;
@@ -510,9 +523,7 @@ function fetchWeather(config) {
   if (!config.weather.enabled) return null;
   
   const location = config.weather.location || '';
-  const units = config.weather.units === 'metric' ? 'm' : 'u';
   
-  // Using wttr.in - no API key needed
   const raw = exec(`curl -s "wttr.in/${encodeURIComponent(location)}?format=j1" 2>/dev/null`, { timeout: 5000 });
   const data = parseJSON(raw);
   
@@ -548,14 +559,12 @@ function fetchWeather(config) {
 function fetchGitHubNotifications(config) {
   if (!config.github.enabled) return [];
   
-  // Check if gh CLI is available
   const ghCheck = exec('which gh 2>/dev/null');
   if (!ghCheck) return [];
   
   const raw = exec(`gh api notifications --jq '.[] | {id: .id, reason: .reason, title: .subject.title, type: .subject.type, repo: .repository.full_name, unread: .unread}' 2>/dev/null`);
   if (!raw) return [];
   
-  // Parse NDJSON
   const notifications = raw.split('\n')
     .filter(line => line.trim())
     .map(line => parseJSON(line))
@@ -570,7 +579,6 @@ function fetchSystemHealth(config) {
   
   const health = {};
   
-  // Battery (macOS)
   if (config.system.showBattery && process.platform === 'darwin') {
     const batteryRaw = exec('pmset -g batt 2>/dev/null');
     if (batteryRaw) {
@@ -593,23 +601,22 @@ function calculateFocusTime(events, config) {
   
   const now = new Date();
   const endOfDay = new Date(now);
-  endOfDay.setHours(18, 0, 0, 0); // Assume workday ends at 6 PM
+  endOfDay.setHours(18, 0, 0, 0);
   
   if (now >= endOfDay) return [];
   
-  // Filter to today's timed events
   const todayEvents = events
     .filter(e => !e.allDay && new Date(e.start) >= now && new Date(e.start) < endOfDay)
     .sort((a, b) => new Date(a.start) - new Date(b.start));
   
   const focusBlocks = [];
-  let currentTime = new Date(Math.max(now, new Date().setHours(9, 0, 0, 0))); // Start at 9 AM or now
+  let currentTime = new Date(Math.max(now, new Date().setHours(9, 0, 0, 0)));
   
   for (const event of todayEvents) {
     const eventStart = new Date(event.start);
     if (eventStart > currentTime) {
-      const duration = (eventStart - currentTime) / 60000; // minutes
-      if (duration >= 30) { // Only show blocks >= 30 min
+      const duration = (eventStart - currentTime) / 60000;
+      if (duration >= 30) {
         focusBlocks.push({
           start: new Date(currentTime),
           end: eventStart,
@@ -620,7 +627,6 @@ function calculateFocusTime(events, config) {
     currentTime = new Date(Math.max(currentTime, new Date(event.end)));
   }
   
-  // Check time until end of day
   if (currentTime < endOfDay) {
     const duration = (endOfDay - currentTime) / 60000;
     if (duration >= 30) {
@@ -632,10 +638,33 @@ function calculateFocusTime(events, config) {
     }
   }
   
-  return focusBlocks.slice(0, 3); // Top 3 focus blocks
+  return focusBlocks.slice(0, 3);
 }
 
-// ─── Renderers ───────────────────────────────────────────────────────────────
+function fetchAllData(config) {
+  const emails = fetchEmails(config);
+  const events = fetchCalendarEvents(config);
+  const taskData = fetchTasks(config);
+  const weather = fetchWeather(config);
+  const github = fetchGitHubNotifications(config);
+  const systemHealth = fetchSystemHealth(config);
+  const focusBlocks = calculateFocusTime(events, config);
+  const quote = getDailyQuote();
+  
+  return {
+    timestamp: new Date().toISOString(),
+    greeting: getGreeting(),
+    quote,
+    tasks: taskData,
+    calendar: { events, focusBlocks },
+    email: emails,
+    weather,
+    github,
+    system: systemHealth,
+  };
+}
+
+// ─── Terminal Renderers ──────────────────────────────────────────────────────
 
 function renderHeader(config, weather, systemHealth) {
   const now = new Date();
@@ -655,13 +684,11 @@ function renderHeader(config, weather, systemHealth) {
   console.log(`${c.bold}${c.cyan}  ☀️  ${getGreeting()}!${c.reset}`);
   console.log(`${c.dim}  ${dateStr} • ${timeStr}${c.reset}`);
   
-  // Weather one-liner in header
   if (weather) {
     const weatherIcon = getWeatherIcon(weather.condition);
     console.log(`${c.dim}  ${weatherIcon} ${weather.temp}${weather.unit} (feels ${weather.feelsLike}${weather.unit}) • ${weather.condition}${c.reset}`);
   }
   
-  // Battery warning if low
   if (systemHealth?.battery && systemHealth.battery.percent <= 20 && !systemHealth.battery.charging) {
     console.log(`${c.yellow}  ⚠️  Battery low: ${systemHealth.battery.percent}%${c.reset}`);
   }
@@ -689,7 +716,6 @@ function renderQuote(config) {
   const quote = getDailyQuote();
   const maxWidth = config.display.width - 8;
   
-  // Word wrap the quote
   const words = quote.text.split(' ');
   const lines = [];
   let currentLine = '';
@@ -721,7 +747,6 @@ function renderTasks(taskData, config) {
   const lines = [];
   const maxShown = config.display.maxTasksShown;
   
-  // Priority tasks first
   const sorted = allTasks.sort((a, b) => {
     if (a.isOverdue && !b.isOverdue) return -1;
     if (!a.isOverdue && b.isOverdue) return 1;
@@ -749,7 +774,6 @@ function renderTasks(taskData, config) {
     lines.push(`${c.dim}  ... and ${allTasks.length - maxShown} more tasks${c.reset}`);
   }
   
-  // Show upcoming section if enabled
   if (config.todoist.showUpcoming && upcoming.length > 0) {
     lines.push('');
     lines.push(`${c.dim}── Upcoming ──${c.reset}`);
@@ -776,7 +800,6 @@ function renderCalendar(events, focusBlocks, config) {
   const shown = events.slice(0, config.display.maxEventsShown);
   const now = new Date();
   
-  // Find next event
   const nextEvent = events.find(e => !e.allDay && new Date(e.start) > now);
   
   for (const event of shown) {
@@ -811,7 +834,6 @@ function renderCalendar(events, focusBlocks, config) {
     lines.push(`${c.dim}  ... and ${events.length - config.display.maxEventsShown} more events${c.reset}`);
   }
   
-  // Focus time suggestions
   if (focusBlocks.length > 0 && !config.display.compact) {
     lines.push('');
     lines.push(`${c.green}── Focus Time ──${c.reset}`);
@@ -876,29 +898,6 @@ function renderGitHub(notifications, config) {
   console.log(box(`🐙 GITHUB (${notifications.length})`, lines.join('\n'), c.gray, config));
 }
 
-function renderWeatherDetailed(weather, config) {
-  if (!weather) return;
-  
-  const lines = [
-    `${getWeatherIcon(weather.condition)} ${c.bold}${weather.condition}${c.reset} in ${weather.location}`,
-    ``,
-    `${c.cyan}Temperature:${c.reset} ${weather.temp}${weather.unit} (feels like ${weather.feelsLike}${weather.unit})`,
-    `${c.cyan}High / Low:${c.reset}  ${weather.high}${weather.unit} / ${weather.low}${weather.unit}`,
-    `${c.cyan}Humidity:${c.reset}    ${weather.humidity}%`,
-    `${c.cyan}Wind:${c.reset}        ${weather.windSpeed} ${weather.windUnit}`,
-  ];
-  
-  if (weather.chanceOfRain && parseInt(weather.chanceOfRain) > 0) {
-    lines.push(`${c.cyan}Rain chance:${c.reset} ${weather.chanceOfRain}%`);
-  }
-  
-  if (weather.sunrise && weather.sunset) {
-    lines.push(`${c.cyan}Sun:${c.reset}         ↑${weather.sunrise} ↓${weather.sunset}`);
-  }
-
-  console.log(box('🌤️ WEATHER', lines.join('\n'), c.cyan, config));
-}
-
 function renderFooter(stats, config) {
   console.log(divider(config, '═'));
   console.log();
@@ -918,10 +917,750 @@ function renderFooter(stats, config) {
   console.log();
 }
 
-// ─── JSON Output ─────────────────────────────────────────────────────────────
+// ─── Web GUI ─────────────────────────────────────────────────────────────────
 
-function outputJSON(data) {
-  console.log(JSON.stringify(data, null, 2));
+function generateHTML(data, config) {
+  const weatherIcon = data.weather ? getWeatherIconEmoji(data.weather.condition) : '🌡️';
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morning Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☀️</text></svg>">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --bg-hover: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --text-dim: #6e7681;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --purple: #a371f7;
+      --pink: #db61a2;
+      --orange: #f0883e;
+    }
+    
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f6f8fa;
+        --bg-card: #ffffff;
+        --bg-hover: #f3f4f6;
+        --border: #d0d7de;
+        --text: #1f2328;
+        --text-muted: #656d76;
+        --text-dim: #8c959f;
+        --accent: #0969da;
+        --green: #1a7f37;
+        --yellow: #9a6700;
+        --red: #cf222e;
+        --purple: #8250df;
+        --pink: #bf3989;
+        --orange: #bc4c00;
+      }
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    /* Header */
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .greeting {
+      font-size: 2rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    
+    .greeting .sun {
+      display: inline-block;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+    }
+    
+    .date-time {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .weather-line {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+    
+    .weather-line .temp {
+      color: var(--text);
+      font-weight: 500;
+    }
+    
+    /* Quote */
+    .quote {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding: 1rem 2rem;
+      font-style: italic;
+      color: var(--text-muted);
+    }
+    
+    .quote-text {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .quote-author {
+      font-size: 0.9rem;
+      color: var(--text-dim);
+    }
+    
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-hover);
+    }
+    
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    
+    .card-count {
+      background: var(--accent);
+      color: white;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 10px;
+    }
+    
+    .card-count.warning {
+      background: var(--red);
+    }
+    
+    .card-body {
+      padding: 0;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    
+    .card-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .card-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+    
+    .empty-state {
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    
+    .empty-state .emoji {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    /* Items */
+    .item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.875rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+    
+    .item:last-child {
+      border-bottom: none;
+    }
+    
+    .item:hover {
+      background: var(--bg-hover);
+    }
+    
+    .item-icon {
+      flex-shrink: 0;
+      width: 20px;
+      text-align: center;
+    }
+    
+    .item-content {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .item-title {
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .item-meta {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 0.125rem;
+    }
+    
+    .item-badge {
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    
+    /* Task specific */
+    .priority-4 { color: var(--red); }
+    .priority-3 { color: var(--yellow); }
+    .priority-2 { color: var(--accent); }
+    .priority-1 { color: var(--text-dim); }
+    
+    .overdue-badge {
+      background: rgba(248, 81, 73, 0.15);
+      color: var(--red);
+    }
+    
+    /* Event specific */
+    .event-time {
+      font-size: 0.85rem;
+      color: var(--accent);
+      font-weight: 500;
+      min-width: 70px;
+    }
+    
+    .event-time.all-day {
+      color: var(--purple);
+    }
+    
+    .event-time.past {
+      color: var(--text-dim);
+    }
+    
+    .event-location {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin-top: 0.25rem;
+    }
+    
+    .next-badge {
+      background: rgba(63, 185, 80, 0.15);
+      color: var(--green);
+    }
+    
+    /* Focus time */
+    .focus-section {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--border);
+      background: rgba(63, 185, 80, 0.05);
+    }
+    
+    .focus-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--green);
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .focus-block {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      padding: 0.25rem 0;
+    }
+    
+    .focus-block .time {
+      color: var(--green);
+      font-weight: 500;
+    }
+    
+    /* Email specific */
+    .email-from {
+      font-weight: 500;
+      color: var(--accent);
+    }
+    
+    /* GitHub specific */
+    .gh-repo {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    
+    /* Weather card */
+    .weather-card {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      padding: 1.25rem;
+    }
+    
+    .weather-main {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    
+    .weather-icon {
+      font-size: 3rem;
+    }
+    
+    .weather-temp {
+      font-size: 2.5rem;
+      font-weight: 600;
+    }
+    
+    .weather-condition {
+      color: var(--text-muted);
+    }
+    
+    .weather-details {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+    }
+    
+    .weather-detail {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted);
+    }
+    
+    .weather-detail .label {
+      color: var(--text-dim);
+    }
+    
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    
+    .summary {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    
+    .summary-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .summary-count {
+      font-weight: 600;
+      font-size: 1.25rem;
+    }
+    
+    .summary-label {
+      font-size: 0.9rem;
+    }
+    
+    .summary-item.overdue .summary-count { color: var(--red); }
+    .summary-item.tasks .summary-count { color: var(--yellow); }
+    .summary-item.events .summary-count { color: var(--accent); }
+    .summary-item.emails .summary-count { color: var(--purple); }
+    .summary-item.github .summary-count { color: var(--text-muted); }
+    
+    .refresh-info {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+    
+    .refresh-btn {
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-left: 0.5rem;
+      transition: background 0.15s;
+    }
+    
+    .refresh-btn:hover {
+      background: var(--border);
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem;
+      }
+      
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .greeting {
+        font-size: 1.5rem;
+      }
+      
+      .weather-card {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1 class="greeting"><span class="sun">☀️</span> ${data.greeting}!</h1>
+      <div class="date-time">${formatDateLong(new Date())} • ${formatTimeLong(new Date())}</div>
+      ${data.weather ? `
+        <div class="weather-line">
+          ${weatherIcon} <span class="temp">${data.weather.temp}${data.weather.unit}</span> 
+          (feels like ${data.weather.feelsLike}${data.weather.unit}) • ${data.weather.condition}
+        </div>
+      ` : ''}
+    </header>
+    
+    ${config.quote.enabled ? `
+      <div class="quote">
+        <div class="quote-text">"${data.quote.text}"</div>
+        <div class="quote-author">— ${data.quote.author}</div>
+      </div>
+    ` : ''}
+    
+    <div class="grid">
+      <!-- Tasks -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📋 Tasks</div>
+          ${data.tasks.overdue.length > 0 ? `<span class="card-count warning">${data.tasks.overdue.length} overdue</span>` : ''}
+          ${data.tasks.today.length > 0 ? `<span class="card-count">${data.tasks.today.length} today</span>` : ''}
+        </div>
+        <div class="card-body">
+          ${[...data.tasks.overdue, ...data.tasks.today].length === 0 ? `
+            <div class="empty-state">
+              <div class="emoji">✨</div>
+              <div>No tasks due today. Enjoy!</div>
+            </div>
+          ` : [...data.tasks.overdue, ...data.tasks.today].map(task => `
+            <div class="item">
+              <div class="item-icon priority-${task.priority}">${task.priority >= 3 ? '●' : '○'}</div>
+              <div class="item-content">
+                <div class="item-title">${escapeHtml(task.content)}</div>
+                ${task.due ? `<div class="item-meta">${escapeHtml(task.due)}</div>` : ''}
+              </div>
+              ${task.isOverdue ? '<span class="item-badge overdue-badge">Overdue</span>' : ''}
+            </div>
+          `).join('')}
+          ${data.tasks.upcoming.length > 0 ? `
+            <div class="focus-section" style="background: rgba(88, 166, 255, 0.05);">
+              <div class="focus-title" style="color: var(--accent);">Upcoming</div>
+              ${data.tasks.upcoming.slice(0, 3).map(task => `
+                <div class="focus-block">
+                  <span>○</span>
+                  <span>${escapeHtml(task.content)}</span>
+                  <span style="color: var(--text-dim);">(${escapeHtml(task.due || task.dueDate || '')})</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+      
+      <!-- Calendar -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📅 Calendar</div>
+          ${data.calendar.events.length > 0 ? `<span class="card-count">${data.calendar.events.length}</span>` : ''}
+        </div>
+        <div class="card-body">
+          ${data.calendar.events.length === 0 ? `
+            <div class="empty-state">
+              <div class="emoji">📭</div>
+              <div>No events scheduled</div>
+            </div>
+          ` : data.calendar.events.map((event, i) => {
+            const now = new Date();
+            const isPast = !event.allDay && new Date(event.end) < now;
+            const isNext = !isPast && !event.allDay && data.calendar.events.slice(0, i).every(e => e.allDay || new Date(e.end) < now);
+            return `
+              <div class="item">
+                <div class="event-time ${event.allDay ? 'all-day' : ''} ${isPast ? 'past' : ''}">
+                  ${event.allDay ? 'All day' : formatTimeLong(new Date(event.start))}
+                </div>
+                <div class="item-content">
+                  <div class="item-title" ${isPast ? 'style="color: var(--text-dim);"' : ''}>${escapeHtml(event.summary)}</div>
+                  ${event.location ? `<div class="event-location">📍 ${escapeHtml(event.location)}</div>` : ''}
+                  ${event.meetLink ? `<div class="event-location"><a href="${escapeHtml(event.meetLink)}" target="_blank" style="color: var(--accent);">🔗 Join meeting</a></div>` : ''}
+                </div>
+                ${isNext ? '<span class="item-badge next-badge">Next</span>' : ''}
+              </div>
+            `;
+          }).join('')}
+          ${data.calendar.focusBlocks.length > 0 ? `
+            <div class="focus-section">
+              <div class="focus-title">◆ Focus Time</div>
+              ${data.calendar.focusBlocks.map(block => `
+                <div class="focus-block">
+                  <span class="time">${formatTimeLong(new Date(block.start))}</span>
+                  <span>—</span>
+                  <span>${formatDuration(block.duration)} available</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+      
+      <!-- Email -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📧 Inbox</div>
+          ${data.email.length > 0 ? `<span class="card-count">${data.email.length} unread</span>` : ''}
+        </div>
+        <div class="card-body">
+          ${data.email.length === 0 ? `
+            <div class="empty-state">
+              <div class="emoji">🎉</div>
+              <div>Inbox zero!</div>
+            </div>
+          ` : data.email.map(email => `
+            <div class="item">
+              <div class="item-icon">✉️</div>
+              <div class="item-content">
+                <div class="item-title">${escapeHtml(email.subject)}</div>
+                <div class="item-meta email-from">${escapeHtml(email.from)}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      
+      <!-- GitHub -->
+      ${data.github.length > 0 ? `
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🐙 GitHub</div>
+            <span class="card-count">${data.github.length}</span>
+          </div>
+          <div class="card-body">
+            ${data.github.map(n => `
+              <div class="item">
+                <div class="item-icon">${n.type === 'PullRequest' ? '🔀' : n.type === 'Issue' ? '🐛' : n.type === 'Release' ? '🏷️' : '📌'}</div>
+                <div class="item-content">
+                  <div class="item-title">${escapeHtml(n.title)}</div>
+                  <div class="item-meta gh-repo">${escapeHtml(n.repo)}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+      
+      <!-- Weather Details -->
+      ${data.weather ? `
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🌤️ Weather</div>
+          </div>
+          <div class="weather-card">
+            <div class="weather-main">
+              <div class="weather-icon">${weatherIcon}</div>
+              <div>
+                <div class="weather-temp">${data.weather.temp}${data.weather.unit}</div>
+                <div class="weather-condition">${data.weather.condition}</div>
+              </div>
+            </div>
+            <div class="weather-details">
+              <div class="weather-detail"><span class="label">Feels like</span> ${data.weather.feelsLike}${data.weather.unit}</div>
+              <div class="weather-detail"><span class="label">High/Low</span> ${data.weather.high}° / ${data.weather.low}°</div>
+              <div class="weather-detail"><span class="label">Humidity</span> ${data.weather.humidity}%</div>
+              <div class="weather-detail"><span class="label">Wind</span> ${data.weather.windSpeed} ${data.weather.windUnit}</div>
+              ${data.weather.chanceOfRain && parseInt(data.weather.chanceOfRain) > 0 ? `<div class="weather-detail"><span class="label">Rain</span> ${data.weather.chanceOfRain}%</div>` : ''}
+              ${data.weather.sunrise ? `<div class="weather-detail"><span class="label">Sun</span> ↑${data.weather.sunrise} ↓${data.weather.sunset}</div>` : ''}
+            </div>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+    
+    <footer class="footer">
+      <div class="summary">
+        ${data.tasks.overdue.length > 0 ? `<div class="summary-item overdue"><span class="summary-count">${data.tasks.overdue.length}</span><span class="summary-label">overdue</span></div>` : ''}
+        ${data.tasks.today.length > 0 ? `<div class="summary-item tasks"><span class="summary-count">${data.tasks.today.length}</span><span class="summary-label">tasks</span></div>` : ''}
+        ${data.calendar.events.length > 0 ? `<div class="summary-item events"><span class="summary-count">${data.calendar.events.length}</span><span class="summary-label">events</span></div>` : ''}
+        ${data.email.length > 0 ? `<div class="summary-item emails"><span class="summary-count">${data.email.length}</span><span class="summary-label">emails</span></div>` : ''}
+        ${data.github.length > 0 ? `<div class="summary-item github"><span class="summary-count">${data.github.length}</span><span class="summary-label">notifications</span></div>` : ''}
+      </div>
+      <div class="refresh-info">
+        Last updated: ${formatTimeLong(new Date())}
+        <button class="refresh-btn" onclick="location.reload()">↻ Refresh</button>
+      </div>
+      ${config.gui.autoRefresh ? `
+        <script>
+          setTimeout(() => location.reload(), ${config.gui.refreshInterval * 1000});
+        </script>
+      ` : ''}
+    </footer>
+  </div>
+</body>
+</html>`;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatDateLong(date) {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function formatTimeLong(date) {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function formatDuration(minutes) {
+  if (minutes >= 60) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  return `${minutes}m`;
+}
+
+function getWeatherIconEmoji(condition) {
+  const cond = (condition || '').toLowerCase();
+  if (cond.includes('sun') || cond.includes('clear')) return '☀️';
+  if (cond.includes('cloud') && cond.includes('part')) return '⛅';
+  if (cond.includes('cloud') || cond.includes('overcast')) return '☁️';
+  if (cond.includes('rain') || cond.includes('drizzle')) return '🌧️';
+  if (cond.includes('thunder') || cond.includes('storm')) return '⛈️';
+  if (cond.includes('snow')) return '🌨️';
+  if (cond.includes('fog') || cond.includes('mist')) return '🌫️';
+  if (cond.includes('wind')) return '💨';
+  return '🌡️';
+}
+
+function startGUIServer(config, port) {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/data') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const data = fetchAllData(config);
+      res.end(JSON.stringify(data));
+    } else {
+      res.setHeader('Content-Type', 'text/html');
+      const data = fetchAllData(config);
+      res.end(generateHTML(data, config));
+    }
+  });
+  
+  server.listen(port, '127.0.0.1', () => {
+    const url = `http://localhost:${port}`;
+    console.log(`\n☀️  Morning Dashboard GUI`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`Server running at: ${url}`);
+    console.log(`API endpoint: ${url}/api/data`);
+    console.log(`\nPress Ctrl+C to stop\n`);
+    
+    // Open browser
+    const openCmd = process.platform === 'darwin' ? 'open' :
+                    process.platform === 'win32' ? 'start' : 'xdg-open';
+    try {
+      spawn(openCmd, [url], { detached: true, stdio: 'ignore' }).unref();
+    } catch (e) {
+      console.log(`Open ${url} in your browser`);
+    }
+  });
+  
+  server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+      console.error(`\nError: Port ${port} is already in use.`);
+      console.log(`Try: mdash gui --port ${port + 1}\n`);
+      process.exit(1);
+    }
+    throw e;
+  });
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -939,10 +1678,8 @@ async function main() {
     process.exit(0);
   }
   
-  // Load config
   let config = loadConfig();
   
-  // Override with custom config path
   if (args.configPath && fs.existsSync(args.configPath)) {
     const customConfig = parseJSON(fs.readFileSync(args.configPath, 'utf-8'));
     if (customConfig) {
@@ -950,50 +1687,37 @@ async function main() {
     }
   }
   
-  // Apply CLI overrides
+  // GUI mode
+  if (args.gui) {
+    const port = args.port || config.gui.port;
+    startGUIServer(config, port);
+    return;
+  }
+  
+  // Terminal mode
   if (args.compact) config.display.compact = true;
   if (args.noColor) config.display.color = false;
   
   useColor = config.display.color && !args.json;
   
-  // Determine which sections to show
   const showAll = args.sections.length === 0;
   const shouldShow = (section) => showAll || args.sections.includes(section);
 
-  // Fetch all data
-  const [emails, events, taskData, weather, github, systemHealth] = await Promise.all([
-    shouldShow('email') ? fetchEmails(config) : [],
-    shouldShow('calendar') ? fetchCalendarEvents(config) : [],
-    shouldShow('tasks') ? fetchTasks(config) : { today: [], overdue: [], upcoming: [] },
-    shouldShow('weather') ? fetchWeather(config) : null,
-    shouldShow('github') ? fetchGitHubNotifications(config) : [],
-    fetchSystemHealth(config),
-  ]);
-  
-  const focusBlocks = calculateFocusTime(events, config);
+  const data = fetchAllData(config);
 
-  // JSON output mode
+  // JSON output
   if (args.json) {
-    outputJSON({
-      timestamp: new Date().toISOString(),
-      tasks: taskData,
-      calendar: { events, focusBlocks },
-      email: emails,
-      weather,
-      github,
-      system: systemHealth,
-    });
+    console.log(JSON.stringify(data, null, 2));
     process.exit(0);
   }
 
-  // Clear screen for clean display
+  // Terminal output
   if (!args.compact && showAll) {
     console.clear();
   }
   
-  // Render sections
   if (config.display.showGreeting && showAll) {
-    renderHeader(config, weather, systemHealth);
+    renderHeader(config, data.weather, data.system);
   }
   
   if (config.quote.enabled && showAll && !config.display.compact) {
@@ -1003,37 +1727,32 @@ async function main() {
   console.log();
 
   if (shouldShow('tasks')) {
-    renderTasks(taskData, config);
+    renderTasks(data.tasks, config);
     console.log();
   }
   
   if (shouldShow('calendar')) {
-    renderCalendar(events, focusBlocks, config);
+    renderCalendar(data.calendar.events, data.calendar.focusBlocks, config);
     console.log();
   }
   
   if (shouldShow('email')) {
-    renderEmails(emails, config);
+    renderEmails(data.email, config);
     console.log();
   }
   
-  if (shouldShow('github') && github.length > 0) {
-    renderGitHub(github, config);
-    console.log();
-  }
-  
-  if (shouldShow('weather') && weather && args.sections.includes('weather')) {
-    renderWeatherDetailed(weather, config);
+  if (shouldShow('github') && data.github.length > 0) {
+    renderGitHub(data.github, config);
     console.log();
   }
   
   if (config.display.showSummary && showAll) {
     renderFooter({
-      overdueTasks: taskData.overdue.length,
-      todayTasks: taskData.today.length,
-      events: events.length,
-      emails: emails.length,
-      github: github.length,
+      overdueTasks: data.tasks.overdue.length,
+      todayTasks: data.tasks.today.length,
+      events: data.calendar.events.length,
+      emails: data.email.length,
+      github: data.github.length,
     }, config);
   }
 }
