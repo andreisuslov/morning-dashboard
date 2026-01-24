@@ -468,6 +468,35 @@ mdash --json | jq '.tasks.today | length'
 }
 ```
 
+## 🐳 Docker
+
+Run the dashboard as an always-on container:
+
+```bash
+# Build and start
+docker compose up -d
+
+# View logs
+docker logs -f morning-dashboard
+
+# Stop
+docker compose down
+```
+
+The container:
+- Runs on port 3141 (configurable in docker-compose.yml)
+- Mounts your config from `~/.config/morning-dashboard`
+- Mounts `gog` and `gh` auth from `~/.config/`
+- Auto-restarts unless manually stopped
+
+Access at: http://localhost:3141
+
+### Environment Variables
+
+- `DOCKER=1` - Auto-set in container, binds to 0.0.0.0
+- `NO_BROWSER=1` - Skip auto-opening browser
+- `TZ` - Timezone (default: America/New_York)
+
 ## 🔧 Troubleshooting
 
 ### "No tasks" but I have tasks

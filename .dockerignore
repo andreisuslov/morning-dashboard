@@ -1,0 +1,20 @@
+# Git
+.git
+.gitignore
+
+# Backup files
+*.bak
+*.tmp
+*.broken
+
+# Development
+*.md
+!README.md
+scripts/
+*.plist
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/

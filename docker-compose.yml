@@ -1,0 +1,23 @@
+services:
+  morning-dashboard:
+    build: .
+    container_name: morning-dashboard
+    restart: unless-stopped
+    ports:
+      - "3141:3141"
+    volumes:
+      # Mount config and credentials from host
+      - ~/.config/morning-dashboard:/root/.config/morning-dashboard:ro
+      # Mount gog config for Gmail/Calendar auth
+      - ~/.config/gog:/root/.config/gog:ro
+      # Mount gh config for GitHub notifications (optional)
+      - ~/.config/gh:/root/.config/gh:ro
+    environment:
+      - NODE_ENV=production
+      - TZ=America/New_York
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3141/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

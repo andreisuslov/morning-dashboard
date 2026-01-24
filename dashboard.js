@@ -889,7 +889,9 @@ function fetchEmails(config) {
   const accountFlag = account ? `--account ${account}` : '';
   
   const raw = exec(`gog gmail search '${config.gmail.query}' --max ${config.gmail.maxEmails} ${accountFlag} --json 2>/dev/null`);
-  const emails = parseJSON(raw);
+  const data = parseJSON(raw);
+  // gog returns {threads: [...]} or {messages: [...]} or direct array
+  const emails = data?.threads || data?.messages || (Array.isArray(data) ? data : []);
   if (!emails || !Array.isArray(emails)) return [];
   
   return emails.map(e => ({
@@ -924,6 +926,24 @@ function markEmailAsRead(config, emailId) {
   return { success: true };
 }
 
+// Archive email (remove from inbox)
+function archiveEmail(config, threadId) {
+  const account = config.google?.account;
+  const accountFlag = account ? `--account ${account}` : '';
+  
+  exec(`gog gmail thread modify ${threadId} --remove INBOX ${accountFlag} --force 2>/dev/null`);
+  return { success: true };
+}
+
+// Trash email
+function trashEmail(config, threadId) {
+  const account = config.google?.account;
+  const accountFlag = account ? `--account ${account}` : '';
+  
+  exec(`gog gmail thread modify ${threadId} --add TRASH --remove INBOX ${accountFlag} --force 2>/dev/null`);
+  return { success: true };
+}
+
 function fetchCalendarEvents(config, options = {}) {
   if (!config.calendar?.enabled) return [];
   
@@ -944,7 +964,9 @@ function fetchCalendarEvents(config, options = {}) {
   to.setHours(23, 59, 59, 999);
   
   const raw = exec(`gog calendar events ${config.calendar.id} --from "${from.toISOString()}" --to "${to.toISOString()}" ${accountFlag} --json 2>/dev/null`);
-  const events = parseJSON(raw);
+  const data = parseJSON(raw);
+  // gog returns {events: [...]} or direct array
+  const events = data?.events || (Array.isArray(data) ? data : []);
   if (!events || !Array.isArray(events)) return [];
 
   return events
@@ -1449,16 +1471,23 @@ function generateHTML(data, config, status) {
         lastDate = eventDate;
         const d = new Date(e.start);
         let dateLabel;
-        if (eventDate === today) dateLabel = 'Today';
+        let dateId = '';
+        if (eventDate === today) { dateLabel = 'Today'; dateId = ' id="today-header"'; }
         else if (eventDate === tomorrow) dateLabel = 'Tomorrow';
         else if (eventDate === yesterday) dateLabel = 'Yesterday';
         else dateLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        html += '<div class="date-group">' + dateLabel + '</div>';
+        html += '<div class="date-group"' + dateId + '>' + dateLabel + '</div>';
       }
       
       const eventTime = e.allDay ? 'All day' : formatTimeLong(new Date(e.start));
       
-      html += '<div class="list-item clickable" onclick="openEventDetail(\'' + encodeURIComponent(e.id) + '\')">';
+      // Store event data for hover actions
+      const eventDataAttr = 'data-event-id="' + encodeURIComponent(e.id) + '"';
+      const hasMeetLink = e.meetLink ? 'data-meet-link="' + escapeHtml(e.meetLink) + '"' : '';
+      const hasCalLink = e.htmlLink ? 'data-cal-link="' + escapeHtml(e.htmlLink) + '"' : '';
+      const hasLocation = e.location ? 'data-location="' + escapeHtml(e.location) + '"' : '';
+      
+      html += '<div class="list-item clickable" ' + eventDataAttr + ' ' + hasMeetLink + ' ' + hasCalLink + ' ' + hasLocation + ' onclick="openEventDetail(\'' + encodeURIComponent(e.id) + '\')">';
       html += '  <div class="event-time ' + (e.allDay ? 'all-day' : '') + ' ' + (isPast ? 'past' : '') + '">' + eventTime + '</div>';
       html += '  <div class="list-item-content">';
       html += '    <div class="list-item-title ' + (isPast ? 'dimmed' : '') + '">' + escapeHtml(e.summary) + '</div>';
@@ -1466,6 +1495,21 @@ function generateHTML(data, config, status) {
         html += '    <div class="list-item-meta">📍 ' + escapeHtml(e.location) + '</div>';
       }
       html += '  </div>';
+      
+      // Hover action buttons
+      html += '  <div class="list-item-actions">';
+      if (e.meetLink) {
+        html += '    <a href="' + escapeHtml(e.meetLink) + '" target="_blank" class="action-btn primary" onclick="event.stopPropagation()" title="Join Meeting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l5-3v10l-5-3V10zM4 6h10a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg></a>';
+      }
+      if (e.htmlLink) {
+        html += '    <a href="' + escapeHtml(e.htmlLink) + '" target="_blank" class="action-btn" onclick="event.stopPropagation()" title="Open in Calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg></a>';
+      }
+      if (e.location) {
+        html += '    <button class="action-btn" onclick="event.stopPropagation(); openMaps(\'' + escapeHtml(e.location.replace(/'/g, "\\'")) + '\')" title="Open in Maps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></button>';
+      }
+      html += '    <button class="action-btn" onclick="event.stopPropagation(); copyEventLink(\'' + encodeURIComponent(e.id) + '\')" title="Copy Link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg></button>';
+      html += '  </div>';
+      
       if (isNext) {
         html += '  <span class="list-item-badge list-item-badge-success">Next</span>';
       }
@@ -2116,6 +2160,63 @@ function generateHTML(data, config, status) {
       color: var(--success);
     }
     
+    /* Hover Actions */
+    .list-item-actions {
+      display: none;
+      gap: 4px;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    
+    .list-item:hover .list-item-actions {
+      display: flex;
+    }
+    
+    .list-item:hover .list-item-badge {
+      display: none;
+    }
+    
+    .action-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: var(--background-secondary);
+      color: var(--foreground-muted);
+      cursor: pointer;
+      transition: all 100ms;
+      font-size: 12px;
+    }
+    
+    .action-btn:hover {
+      background: var(--accent);
+      color: white;
+    }
+    
+    .action-btn.primary {
+      background: var(--accent);
+      color: white;
+    }
+    
+    .action-btn.primary:hover {
+      opacity: 0.85;
+    }
+    
+    .action-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+    
+    .action-btn-text {
+      width: auto;
+      padding: 0 10px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    
     /* Priority */
     .priority-4 { color: var(--destructive); }
     .priority-3 { color: var(--warning); }
@@ -2712,6 +2813,19 @@ function generateHTML(data, config, status) {
       border-bottom: 1px solid var(--border);
     }
     
+    /* Skeleton Loading */
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    .skeleton { background: linear-gradient(90deg, var(--background-tertiary) 25%, var(--border) 50%, var(--background-tertiary) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
+    .skeleton-text { height: 14px; margin-bottom: 8px; }
+    .skeleton-text-sm { height: 12px; width: 60%; }
+    .skeleton-item { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+    .skeleton-item:last-child { border-bottom: none; }
+    .skeleton-circle { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; }
+    .skeleton-content { flex: 1; }
+    .skeleton-badge { width: 60px; height: 22px; border-radius: 9999px; }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    
     /* Responsive */
     @media (max-width: 840px) {
       .app { padding: 20px 16px; }
@@ -2856,11 +2970,16 @@ function generateHTML(data, config, status) {
             <div class="empty-text">Inbox zero!</div>
           </div>
           ` : data.email.map(e => `
-          <div class="list-item clickable" onclick="openEmailDetail('${e.id}')">
+          <div class="list-item clickable" onclick="openEmailDetail('${e.id}')" data-thread-id="${e.threadId}">
             <div class="list-item-indicator">${icons.mail}</div>
             <div class="list-item-content">
               <div class="list-item-title">${escapeHtml(e.subject)}</div>
               <div class="list-item-meta">${escapeHtml(e.from)}</div>
+            </div>
+            <div class="list-item-actions">
+              <button class="action-btn" onclick="event.stopPropagation(); archiveEmail('${e.threadId}', this)" title="Archive"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg></button>
+              <button class="action-btn" onclick="event.stopPropagation(); trashEmail('${e.threadId}', this)" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
+              <a href="https://mail.google.com/mail/u/0/#inbox/${e.threadId}" target="_blank" class="action-btn" onclick="event.stopPropagation()" title="Open in Gmail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg></a>
             </div>
           </div>
           `).join('')}
@@ -3025,9 +3144,110 @@ function generateHTML(data, config, status) {
         document.getElementById('detailModal').classList.remove('open');
       }
       
+      // Open location in Maps
+      function openMaps(location) {
+        const encoded = encodeURIComponent(location);
+        window.open('https://www.google.com/maps/search/?api=1&query=' + encoded, '_blank');
+      }
+      
+      // Copy event link to clipboard
+      async function copyEventLink(eventId) {
+        try {
+          const res = await fetch('/api/event/' + eventId);
+          const event = await res.json();
+          if (event.htmlLink) {
+            await navigator.clipboard.writeText(event.htmlLink);
+            showToast('Link copied to clipboard');
+          } else {
+            showToast('No link available', 'error');
+          }
+        } catch (e) {
+          showToast('Failed to copy link', 'error');
+        }
+      }
+      
+      // Archive email
+      async function archiveEmail(threadId, btn) {
+        try {
+          const listItem = btn.closest('.list-item');
+          listItem.style.opacity = '0.5';
+          
+          const res = await fetch('/api/email/archive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId })
+          });
+          
+          if (res.ok) {
+            listItem.style.transition = 'all 0.3s ease';
+            listItem.style.transform = 'translateX(-100%)';
+            listItem.style.opacity = '0';
+            setTimeout(() => listItem.remove(), 300);
+            showToast('Email archived');
+          } else {
+            listItem.style.opacity = '1';
+            showToast('Failed to archive', 'error');
+          }
+        } catch (e) {
+          showToast('Failed to archive', 'error');
+        }
+      }
+      
+      // Trash email
+      async function trashEmail(threadId, btn) {
+        try {
+          const listItem = btn.closest('.list-item');
+          listItem.style.opacity = '0.5';
+          
+          const res = await fetch('/api/email/trash', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId })
+          });
+          
+          if (res.ok) {
+            listItem.style.transition = 'all 0.3s ease';
+            listItem.style.transform = 'translateX(100%)';
+            listItem.style.opacity = '0';
+            setTimeout(() => listItem.remove(), 300);
+            showToast('Email deleted');
+          } else {
+            listItem.style.opacity = '1';
+            showToast('Failed to delete', 'error');
+          }
+        } catch (e) {
+          showToast('Failed to delete', 'error');
+        }
+      }
+      
+      // Quick join meeting
+      function joinMeeting(meetLink) {
+        window.open(meetLink, '_blank');
+      }
+      
+      // Copy event details to clipboard
+      async function copyEventDetails(eventId, summary, location, startTime) {
+        try {
+          const start = new Date(startTime);
+          const dateStr = start.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+          const timeStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+          let text = decodeURIComponent(summary) + '\\n' + dateStr + ' at ' + timeStr;
+          if (location) text += '\\n📍 ' + decodeURIComponent(location);
+          await navigator.clipboard.writeText(text);
+          showToast('Event details copied!');
+        } catch (e) {
+          showToast('Failed to copy', 'error');
+        }
+      }
+      
       // Close on overlay click
       document.getElementById('detailModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('detail-modal')) closeDetail();
+      });
+      
+      // Close on Escape key
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeDetail();
       });
       
       // Open task detail
@@ -3099,9 +3319,11 @@ function generateHTML(data, config, status) {
         
         try {
           const res = await fetch('/api/event/' + eventId);
-          const event = await res.json();
+          const data = await res.json();
+          // Handle both {event: {...}} wrapper and direct event object
+          const event = data.event || data;
           
-          if (event.error) {
+          if (event.error || !event.summary) {
             document.getElementById('detailBody').innerHTML = '<p>Error loading event</p>';
             return;
           }
@@ -3145,9 +3367,11 @@ function generateHTML(data, config, status) {
             </div>
             \` : ''}
             
-            <div class="detail-actions">
-              \${event.hangoutLink ? \`<a href="\${event.hangoutLink}" target="_blank" class="detail-btn primary">Join Meeting →</a>\` : ''}
-              \${event.htmlLink ? \`<a href="\${event.htmlLink}" target="_blank" class="detail-btn">Open in Calendar →</a>\` : ''}
+            <div class="detail-actions" style="flex-wrap: wrap;">
+              \${event.hangoutLink ? \`<a href="\${event.hangoutLink}" target="_blank" class="detail-btn primary">🎥 Join Meeting</a>\` : ''}
+              \${event.location ? \`<a href="https://www.google.com/maps/search/?api=1&query=\${encodeURIComponent(event.location)}" target="_blank" class="detail-btn">📍 Get Directions</a>\` : ''}
+              \${event.htmlLink ? \`<a href="\${event.htmlLink}" target="_blank" class="detail-btn">📅 Open in Calendar</a>\` : ''}
+              <button class="detail-btn" onclick="copyEventDetails('\${encodeURIComponent(event.id)}', '\${escapeHtmlJS(event.summary || '')}', '\${escapeHtmlJS(event.location || '')}', '\${start.toISOString()}')">📋 Copy Details</button>
             </div>
           \`;
         } catch (e) {
@@ -3346,6 +3570,17 @@ function generateHTML(data, config, status) {
         }
       }
       
+      // Scroll calendar to today on page load
+      (function scrollCalendarToToday() {
+        const todayHeader = document.getElementById('today-header');
+        if (todayHeader) {
+          const cardBody = todayHeader.closest('.card-body');
+          if (cardBody) {
+            cardBody.scrollTop = todayHeader.offsetTop - cardBody.offsetTop;
+          }
+        }
+      })();
+      
       ${config.gui?.autoRefresh !== false ? `setTimeout(() => location.reload(), ${(config.gui?.refreshInterval || 300) * 1000});` : ''}
     </script>
 </body>
@@ -3464,6 +3699,42 @@ function getWeatherIconEmoji(condition) {
 }
 
 function startGUIServer(config, port) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // IN-MEMORY CACHE - Instant responses after first load
+  // ═══════════════════════════════════════════════════════════════════════════
+  const CACHE = { data: null, html: null, timestamp: 0, refreshing: false };
+  const CACHE_TTL = 60000; // 60 seconds
+  const STALE_TTL = 10000; // 10 seconds before background refresh
+  
+  function isCacheValid() { return CACHE.data && (Date.now() - CACHE.timestamp < CACHE_TTL); }
+  function isCacheStale() { return CACHE.data && (Date.now() - CACHE.timestamp > STALE_TTL); }
+  
+  function refreshCache() {
+    if (CACHE.refreshing) return;
+    CACHE.refreshing = true;
+    setImmediate(() => {
+      try {
+        CACHE.data = fetchAllData(config);
+        CACHE.html = generateHTML(CACHE.data, config, getIntegrationStatus(config));
+        CACHE.timestamp = Date.now();
+      } catch (e) { console.error('Cache refresh error:', e.message); }
+      CACHE.refreshing = false;
+    });
+  }
+  
+  // Pre-warm cache on startup
+  console.log('⚡ Pre-loading data...');
+  const startTime = Date.now();
+  try {
+    CACHE.data = fetchAllData(config);
+    CACHE.html = generateHTML(CACHE.data, config, getIntegrationStatus(config));
+    CACHE.timestamp = Date.now();
+    console.log('✓ Data cached in ' + (Date.now() - startTime) + 'ms');
+  } catch (e) { console.log('⚠ Pre-load failed:', e.message); }
+  
+  // Background refresh every 60 seconds
+  setInterval(refreshCache, CACHE_TTL);
+  
   // Helper to parse POST body
   const parseBody = (req) => new Promise((resolve) => {
     let body = '';
@@ -3482,8 +3753,13 @@ function startGUIServer(config, port) {
     return { success: true };
   };
   
+  // Cache integration status (only compute once, not on every request)
+  let cachedStatus = getIntegrationStatus(config);
+  const refreshStatus = () => { setImmediate(() => { cachedStatus = getIntegrationStatus(config); }); };
+  setInterval(refreshStatus, 300000); // Refresh every 5 minutes
+  
   const server = http.createServer(async (req, res) => {
-    const status = getIntegrationStatus(config);
+    const status = cachedStatus;
     
     // CORS headers for all requests
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -3496,11 +3772,20 @@ function startGUIServer(config, port) {
       return;
     }
     
-    // API: Get data
+    // API: Get data - uses cache for instant response
     if (req.url === '/api/data' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
-      const data = fetchAllData(config);
-      res.end(JSON.stringify({ ...data, status, config: { weather: config.weather } }));
+      if (CACHE.data && isCacheValid()) {
+        res.setHeader('X-Cache', 'HIT');
+        res.end(JSON.stringify({ ...CACHE.data, status, config: { weather: config.weather } }));
+        if (isCacheStale()) refreshCache();
+      } else {
+        const data = fetchAllData(config);
+        CACHE.data = data;
+        CACHE.timestamp = Date.now();
+        res.setHeader('X-Cache', 'MISS');
+        res.end(JSON.stringify({ ...data, status, config: { weather: config.weather } }));
+      }
     }
     // API: Get status
     else if (req.url === '/api/status' && req.method === 'GET') {
@@ -3610,20 +3895,65 @@ function startGUIServer(config, port) {
       const result = markEmailAsRead(config, body.emailId);
       res.end(JSON.stringify(result));
     }
+    // API: Archive email
+    else if (req.url === '/api/email/archive' && req.method === 'POST') {
+      res.setHeader('Content-Type', 'application/json');
+      const body = await parseBody(req);
+      
+      if (!body.threadId) {
+        res.end(JSON.stringify({ success: false, error: 'Missing threadId' }));
+        return;
+      }
+      
+      const result = archiveEmail(config, body.threadId);
+      res.end(JSON.stringify(result));
+    }
+    // API: Trash email
+    else if (req.url === '/api/email/trash' && req.method === 'POST') {
+      res.setHeader('Content-Type', 'application/json');
+      const body = await parseBody(req);
+      
+      if (!body.threadId) {
+        res.end(JSON.stringify({ success: false, error: 'Missing threadId' }));
+        return;
+      }
+      
+      const result = trashEmail(config, body.threadId);
+      res.end(JSON.stringify(result));
+    }
     // Setup page
     else if (req.url === '/setup') {
       res.setHeader('Content-Type', 'text/html');
       res.end(generateSetupHTML(status, config));
     }
-    // Main dashboard
+    // Main dashboard - INSTANT from cache
     else {
       res.setHeader('Content-Type', 'text/html');
+      
+      // Fast path: serve cached HTML instantly
+      if (CACHE.html) {
+        res.setHeader('X-Cache', isCacheStale() ? 'STALE' : 'HIT');
+        res.end(CACHE.html);
+        // Background refresh if stale
+        if (isCacheStale()) refreshCache();
+        return;
+      }
+      
+      // Cold path: generate fresh (first load only)
       const data = fetchAllData(config);
-      res.end(generateHTML(data, config, status));
+      CACHE.data = data;
+      CACHE.html = generateHTML(data, config, status);
+      CACHE.timestamp = Date.now();
+      res.setHeader('X-Cache', 'MISS');
+      res.end(CACHE.html);
     }
   });
   
-  server.listen(port, '127.0.0.1', () => {
+  // Listen on 0.0.0.0 for Docker, 127.0.0.1 otherwise
+  const isDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER === '1';
+  const host = isDocker ? '0.0.0.0' : '127.0.0.1';
+  
+  server.listen(port, host, () => {
     const url = `http://localhost:${port}`;
     console.log(`\n☀️  Morning Dashboard GUI`);
     console.log(`${'─'.repeat(40)}`);
@@ -3632,8 +3962,11 @@ function startGUIServer(config, port) {
     console.log(`API:        ${url}/api/data`);
     console.log(`\nPress Ctrl+C to stop\n`);
     
-    const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    try { spawn(openCmd, [url], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {}
+    // Don't try to open browser in Docker/headless environments
+    if (!isDocker && !process.env.NO_BROWSER) {
+      const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+      try { spawn(openCmd, [url], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {}
+    }
   });
   
   server.on('error', (e) => {
