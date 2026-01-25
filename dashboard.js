@@ -23,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const https = require('https');
 const readline = require('readline');
 
 // ─── Version ─────────────────────────────────────────────────────────────────
@@ -3825,7 +3826,13 @@ function startGUIServer(config, port) {
   const refreshStatus = () => { setImmediate(() => { cachedStatus = getIntegrationStatus(config); }); };
   setInterval(refreshStatus, 300000); // Refresh every 5 minutes
   
-  const server = http.createServer(async (req, res) => {
+  // Check for SSL certificates
+  const certDir = path.join(__dirname, 'certs');
+  const certPath = path.join(certDir, 'mdash.local.pem');
+  const keyPath = path.join(certDir, 'mdash.local-key.pem');
+  const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath);
+  
+  const requestHandler = async (req, res) => {
     const status = cachedStatus;
     
     // CORS headers for all requests
@@ -4014,17 +4021,31 @@ function startGUIServer(config, port) {
       res.setHeader('X-Cache', 'MISS');
       res.end(CACHE.html);
     }
-  });
+  };
+  
+  // Create HTTP or HTTPS server based on cert availability
+  let server;
+  if (useHttps) {
+    const sslOptions = {
+      cert: fs.readFileSync(certPath),
+      key: fs.readFileSync(keyPath)
+    };
+    server = https.createServer(sslOptions, requestHandler);
+  } else {
+    server = http.createServer(requestHandler);
+  }
   
   // Listen on 0.0.0.0 for Docker, 127.0.0.1 otherwise
   const isDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER === '1';
   const host = isDocker ? '0.0.0.0' : '127.0.0.1';
+  const protocol = useHttps ? 'https' : 'http';
   
   server.listen(port, host, () => {
-    const url = `http://localhost:${port}`;
+    const url = `${protocol}://localhost:${port}`;
     console.log(`\n☀️  Morning Dashboard GUI`);
     console.log(`${'─'.repeat(40)}`);
     console.log(`Dashboard:  ${url}`);
+    if (useHttps) console.log(`            https://mdash.local`);
     console.log(`Setup:      ${url}/setup`);
     console.log(`API:        ${url}/api/data`);
     console.log(`\nPress Ctrl+C to stop\n`);
