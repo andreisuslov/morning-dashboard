@@ -2,3 +2,8 @@ node_modules/
 .DS_Store
 *.log
 .env
+
+# SSL certificates and private keys
+certs/
+*.pem
+*.key
