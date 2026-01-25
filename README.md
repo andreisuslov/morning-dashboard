@@ -489,7 +489,7 @@ The container:
 - Mounts `gog` and `gh` auth from `~/.config/`
 - Auto-restarts unless manually stopped
 
-Access at: http://localhost:3141
+Access at: http://localhost:3141 (or http://mdash.local:3141 if configured)
 
 ### Environment Variables
 

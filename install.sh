@@ -143,6 +143,26 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   fi
 fi
 
+# Setup mdash.local hostname (optional)
+echo
+echo -e "${BOLD}Custom hostname (optional)${NC}"
+echo "This lets you access the web dashboard at http://mdash.local"
+read -p "Add mdash.local to /etc/hosts? (requires sudo) [y/N] " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  if grep -q "mdash.local" /etc/hosts 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} mdash.local already exists in /etc/hosts"
+  else
+    echo "127.0.0.1  mdash.local" | sudo tee -a /etc/hosts > /dev/null
+    if [ $? -eq 0 ]; then
+      echo -e "${GREEN}✓${NC} Added mdash.local to /etc/hosts"
+      echo -e "  ${CYAN}Access dashboard at: http://mdash.local:3141${NC}"
+    else
+      echo -e "${RED}✗${NC} Failed to add mdash.local (check sudo permissions)"
+    fi
+  fi
+fi
+
 # Summary
 echo
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -150,8 +170,19 @@ echo -e "${GREEN}${BOLD}✨ Installation complete!${NC}"
 echo
 echo -e "${BOLD}Quick start:${NC}"
 echo -e "  ${CYAN}mdash${NC}              Run the full dashboard"
+echo -e "  ${CYAN}mdash gui${NC}          Launch web dashboard"
 echo -e "  ${CYAN}mdash --compact${NC}    Compact mode"
 echo -e "  ${CYAN}mdash --help${NC}       Show all options"
+echo
+echo -e "${BOLD}Web dashboard:${NC}"
+if grep -q "mdash.local" /etc/hosts 2>/dev/null; then
+  echo -e "  ${CYAN}http://mdash.local:3141${NC}"
+else
+  echo -e "  ${CYAN}http://localhost:3141${NC}"
+fi
+echo
+echo -e "${BOLD}Docker (always-on):${NC}"
+echo -e "  ${CYAN}docker compose up -d${NC}"
 echo
 echo -e "${BOLD}Configuration:${NC}"
 echo -e "  ${CYAN}$CONFIG_DIR/config.json${NC}"
