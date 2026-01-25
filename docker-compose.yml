@@ -4,7 +4,7 @@ services:
     container_name: morning-dashboard
     restart: unless-stopped
     ports:
-      - "3141:3141"
+      - "80:3141"
     volumes:
       # Mount config and credentials from host
       - ~/.config/morning-dashboard:/root/.config/morning-dashboard:ro
