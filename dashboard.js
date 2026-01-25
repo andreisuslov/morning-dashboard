@@ -2030,6 +2030,212 @@ function generateHTML(data, config, status) {
       margin-bottom: 32px;
     }
     
+    .grid.edit-mode {
+      grid-template-columns: repeat(3, 1fr);
+    }
+    
+    /* Tile system */
+    .tile {
+      position: relative;
+      transition: transform 200ms, box-shadow 200ms, opacity 200ms;
+    }
+    
+    .tile.tile-small { grid-column: span 1; }
+    .tile.tile-medium { grid-column: span 1; }
+    .tile.tile-large { grid-column: span 2; }
+    
+    @media (max-width: 900px) {
+      .tile.tile-large { grid-column: span 1; }
+    }
+    
+    /* Drag handle */
+    .tile-drag-handle {
+      display: none;
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      width: 24px;
+      height: 24px;
+      background: var(--background-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: grab;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      opacity: 0.8;
+      transition: opacity 150ms, background 150ms;
+    }
+    
+    .tile-drag-handle:hover {
+      opacity: 1;
+      background: var(--background-secondary);
+    }
+    
+    .tile-drag-handle:active {
+      cursor: grabbing;
+    }
+    
+    .tile-drag-handle svg {
+      width: 14px;
+      height: 14px;
+      color: var(--foreground-muted);
+    }
+    
+    .edit-mode .tile-drag-handle {
+      display: flex;
+    }
+    
+    /* Resize handle */
+    .tile-resize-handle {
+      display: none;
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      width: 20px;
+      height: 20px;
+      background: var(--background-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: nwse-resize;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      opacity: 0.8;
+      transition: opacity 150ms;
+    }
+    
+    .tile-resize-handle:hover {
+      opacity: 1;
+    }
+    
+    .tile-resize-handle svg {
+      width: 12px;
+      height: 12px;
+      color: var(--foreground-muted);
+    }
+    
+    .edit-mode .tile-resize-handle {
+      display: flex;
+    }
+    
+    /* Dragging states */
+    .tile.dragging {
+      opacity: 0.9;
+      transform: scale(1.02);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+    }
+    
+    .tile.drag-over {
+      border: 2px dashed var(--accent);
+      background: rgba(99, 102, 241, 0.05);
+    }
+    
+    .tile.drag-placeholder {
+      opacity: 0.3;
+      border: 2px dashed var(--border);
+      background: var(--background-tertiary);
+    }
+    
+    /* Edit mode indicator */
+    .edit-mode .tile {
+      border: 1px solid var(--accent);
+    }
+    
+    .edit-mode .tile:hover {
+      box-shadow: 0 0 0 2px var(--accent);
+    }
+    
+    /* Customize button */
+    .customize-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--foreground-muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 150ms;
+    }
+    
+    .customize-btn:hover {
+      background: var(--background-tertiary);
+      color: var(--foreground);
+      border-color: var(--border-hover);
+    }
+    
+    .customize-btn.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    
+    .customize-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+    
+    /* Edit mode toolbar */
+    .edit-toolbar {
+      display: none;
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 20px;
+      background: var(--background-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      z-index: 1001;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    .edit-toolbar.visible {
+      display: flex;
+    }
+    
+    .edit-toolbar-text {
+      font-size: 13px;
+      color: var(--foreground-muted);
+    }
+    
+    .edit-toolbar-btn {
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 150ms;
+    }
+    
+    .edit-toolbar-btn.primary {
+      background: var(--accent);
+      color: white;
+      border: none;
+    }
+    
+    .edit-toolbar-btn.primary:hover {
+      opacity: 0.9;
+    }
+    
+    .edit-toolbar-btn.secondary {
+      background: transparent;
+      color: var(--foreground-muted);
+      border: 1px solid var(--border);
+    }
+    
+    .edit-toolbar-btn.secondary:hover {
+      background: var(--background-tertiary);
+      color: var(--foreground);
+    }
+    
     /* Card */
     .card {
       background: var(--background-secondary);
@@ -2937,6 +3143,10 @@ function generateHTML(data, config, status) {
     <header class="header">
       <div style="display: flex; align-items: center; justify-content: center; gap: 16px;">
         <h1 class="header-greeting"><span>☀️</span> ${data.greeting}</h1>
+        <button class="customize-btn" id="customizeBtn" onclick="toggleEditMode()" title="Customize Layout">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Customize</span>
+        </button>
         <button class="settings-btn" onclick="openSettings()" title="Settings">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" stroke="currentColor" stroke-width="1.5"/><path d="M14.55 11.25a1.2 1.2 0 00.24 1.32l.04.04a1.46 1.46 0 11-2.06 2.06l-.04-.04a1.2 1.2 0 00-1.32-.24 1.2 1.2 0 00-.73 1.1v.11a1.46 1.46 0 01-2.91 0v-.06a1.2 1.2 0 00-.79-1.1 1.2 1.2 0 00-1.32.24l-.04.04a1.46 1.46 0 11-2.06-2.06l.04-.04a1.2 1.2 0 00.24-1.32 1.2 1.2 0 00-1.1-.73h-.11a1.46 1.46 0 010-2.91h.06a1.2 1.2 0 001.1-.79 1.2 1.2 0 00-.24-1.32l-.04-.04a1.46 1.46 0 112.06-2.06l.04.04a1.2 1.2 0 001.32.24h.06a1.2 1.2 0 00.73-1.1v-.11a1.46 1.46 0 012.91 0v.06a1.2 1.2 0 00.73 1.1 1.2 1.2 0 001.32-.24l.04-.04a1.46 1.46 0 112.06 2.06l-.04.04a1.2 1.2 0 00-.24 1.32v.06a1.2 1.2 0 001.1.73h.11a1.46 1.46 0 010 2.91h-.06a1.2 1.2 0 00-1.1.73z" stroke="currentColor" stroke-width="1.5"/></svg>
         </button>
@@ -2956,9 +3166,9 @@ function generateHTML(data, config, status) {
       </div>
     </header>
     
-    <div class="grid">
+    <div class="grid" id="dashboardGrid">
       <!-- Tasks -->
-      <div class="card">
+      <div class="card tile" data-tile="tasks">
         <div class="card-header">
           <div class="card-title">
             <div class="card-title-icon">${icons.tasks}</div>
@@ -2989,7 +3199,7 @@ function generateHTML(data, config, status) {
       </div>
       
       <!-- Calendar -->
-      <div class="card">
+      <div class="card tile" data-tile="calendar">
         <div class="card-header">
           <div class="card-title">
             <div class="card-title-icon">${icons.calendar}</div>
@@ -3023,7 +3233,7 @@ function generateHTML(data, config, status) {
       </div>
       
       <!-- Email -->
-      <div class="card">
+      <div class="card tile" data-tile="email">
         <div class="card-header">
           <div class="card-title">
             <div class="card-title-icon">${icons.mail}</div>
@@ -3056,7 +3266,7 @@ function generateHTML(data, config, status) {
       
       <!-- GitHub -->
       ${totalGithub > 0 ? `
-      <div class="card">
+      <div class="card tile" data-tile="github">
         <div class="card-header">
           <div class="card-title">
             <div class="card-title-icon">${icons.github}</div>
@@ -3080,7 +3290,7 @@ function generateHTML(data, config, status) {
       
       <!-- Weather -->
       ${data.weather ? `
-      <div class="card">
+      <div class="card tile" data-tile="weather">
         <div class="card-header">
           <div class="card-title">
             <div class="card-title-icon">${icons.sun}</div>
@@ -3174,6 +3384,13 @@ function generateHTML(data, config, status) {
           </div>
         </div>
       </div>
+    </div>
+    
+    <!-- Edit Mode Toolbar -->
+    <div class="edit-toolbar" id="editToolbar">
+      <span class="edit-toolbar-text">🎨 Drag tiles to reorder • Click resize handle to change size</span>
+      <button class="edit-toolbar-btn secondary" onclick="resetLayout()">Reset</button>
+      <button class="edit-toolbar-btn primary" onclick="saveLayout()">Done</button>
     </div>
     
     <!-- Toast -->
@@ -3648,6 +3865,210 @@ function generateHTML(data, config, status) {
           }
         }
       })();
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // Tile Customization: Drag & Drop + Resize
+      // ═══════════════════════════════════════════════════════════════════════
+      
+      const LAYOUT_KEY = 'mdash-layout';
+      let editMode = false;
+      let draggedTile = null;
+      let dragOverTile = null;
+      
+      // Initialize tiles on load
+      (function initTiles() {
+        const grid = document.getElementById('dashboardGrid');
+        if (!grid) return;
+        
+        const tiles = grid.querySelectorAll('.tile');
+        tiles.forEach(tile => {
+          // Add drag handle
+          const dragHandle = document.createElement('div');
+          dragHandle.className = 'tile-drag-handle';
+          dragHandle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>';
+          tile.insertBefore(dragHandle, tile.firstChild);
+          
+          // Add resize handle
+          const resizeHandle = document.createElement('div');
+          resizeHandle.className = 'tile-resize-handle';
+          resizeHandle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15l-6 6M21 9l-12 12"/></svg>';
+          resizeHandle.onclick = (e) => { e.stopPropagation(); cycleTileSize(tile); };
+          tile.appendChild(resizeHandle);
+          
+          // Setup drag events
+          dragHandle.addEventListener('mousedown', (e) => startDrag(e, tile));
+          tile.addEventListener('dragover', handleDragOver);
+          tile.addEventListener('dragleave', handleDragLeave);
+          tile.addEventListener('drop', handleDrop);
+        });
+        
+        // Load saved layout
+        loadLayout();
+      })();
+      
+      function toggleEditMode() {
+        editMode = !editMode;
+        const grid = document.getElementById('dashboardGrid');
+        const toolbar = document.getElementById('editToolbar');
+        const btn = document.getElementById('customizeBtn');
+        
+        if (editMode) {
+          grid.classList.add('edit-mode');
+          toolbar.classList.add('visible');
+          btn.classList.add('active');
+          btn.querySelector('span').textContent = 'Editing...';
+        } else {
+          grid.classList.remove('edit-mode');
+          toolbar.classList.remove('visible');
+          btn.classList.remove('active');
+          btn.querySelector('span').textContent = 'Customize';
+        }
+      }
+      
+      function startDrag(e, tile) {
+        if (!editMode) return;
+        e.preventDefault();
+        
+        draggedTile = tile;
+        tile.classList.add('dragging');
+        tile.setAttribute('draggable', 'true');
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', endDrag);
+      }
+      
+      function handleMouseMove(e) {
+        if (!draggedTile) return;
+        
+        const grid = document.getElementById('dashboardGrid');
+        const tiles = [...grid.querySelectorAll('.tile:not(.dragging)')];
+        
+        // Find tile under cursor
+        const target = tiles.find(tile => {
+          const rect = tile.getBoundingClientRect();
+          return e.clientX >= rect.left && e.clientX <= rect.right &&
+                 e.clientY >= rect.top && e.clientY <= rect.bottom;
+        });
+        
+        if (target && target !== dragOverTile) {
+          if (dragOverTile) dragOverTile.classList.remove('drag-over');
+          dragOverTile = target;
+          dragOverTile.classList.add('drag-over');
+        }
+      }
+      
+      function handleDragOver(e) {
+        e.preventDefault();
+      }
+      
+      function handleDragLeave(e) {
+        this.classList.remove('drag-over');
+      }
+      
+      function handleDrop(e) {
+        e.preventDefault();
+        this.classList.remove('drag-over');
+      }
+      
+      function endDrag() {
+        if (!draggedTile) return;
+        
+        draggedTile.classList.remove('dragging');
+        draggedTile.removeAttribute('draggable');
+        
+        if (dragOverTile && dragOverTile !== draggedTile) {
+          // Swap tiles
+          const grid = document.getElementById('dashboardGrid');
+          const tiles = [...grid.querySelectorAll('.tile')];
+          const draggedIdx = tiles.indexOf(draggedTile);
+          const targetIdx = tiles.indexOf(dragOverTile);
+          
+          if (draggedIdx < targetIdx) {
+            dragOverTile.after(draggedTile);
+          } else {
+            dragOverTile.before(draggedTile);
+          }
+          
+          dragOverTile.classList.remove('drag-over');
+        }
+        
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', endDrag);
+        
+        draggedTile = null;
+        dragOverTile = null;
+      }
+      
+      function cycleTileSize(tile) {
+        if (!editMode) return;
+        
+        const sizes = ['tile-small', 'tile-medium', 'tile-large'];
+        const currentSize = sizes.find(s => tile.classList.contains(s)) || 'tile-medium';
+        const currentIdx = sizes.indexOf(currentSize);
+        const nextIdx = (currentIdx + 1) % sizes.length;
+        
+        sizes.forEach(s => tile.classList.remove(s));
+        tile.classList.add(sizes[nextIdx]);
+        
+        showToast('Tile size: ' + sizes[nextIdx].replace('tile-', ''));
+      }
+      
+      function saveLayout() {
+        const grid = document.getElementById('dashboardGrid');
+        const tiles = [...grid.querySelectorAll('.tile')];
+        
+        const layout = tiles.map(tile => ({
+          id: tile.dataset.tile,
+          size: ['tile-small', 'tile-medium', 'tile-large'].find(s => tile.classList.contains(s)) || 'tile-medium'
+        }));
+        
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+        toggleEditMode();
+        showToast('Layout saved!');
+      }
+      
+      function loadLayout() {
+        const saved = localStorage.getItem(LAYOUT_KEY);
+        if (!saved) return;
+        
+        try {
+          const layout = JSON.parse(saved);
+          const grid = document.getElementById('dashboardGrid');
+          if (!grid) return;
+          
+          // Apply sizes
+          layout.forEach(item => {
+            const tile = grid.querySelector(\`[data-tile="\${item.id}"]\`);
+            if (tile && item.size) {
+              ['tile-small', 'tile-medium', 'tile-large'].forEach(s => tile.classList.remove(s));
+              tile.classList.add(item.size);
+            }
+          });
+          
+          // Reorder tiles
+          const orderedIds = layout.map(l => l.id);
+          const tiles = [...grid.querySelectorAll('.tile')];
+          const orderedTiles = orderedIds
+            .map(id => tiles.find(t => t.dataset.tile === id))
+            .filter(Boolean);
+          
+          // Add any tiles not in saved layout
+          tiles.forEach(t => {
+            if (!orderedTiles.includes(t)) orderedTiles.push(t);
+          });
+          
+          // Reorder in DOM
+          orderedTiles.forEach(tile => grid.appendChild(tile));
+        } catch (e) {
+          console.warn('Failed to load layout:', e);
+        }
+      }
+      
+      function resetLayout() {
+        localStorage.removeItem(LAYOUT_KEY);
+        showToast('Layout reset! Refreshing...');
+        setTimeout(() => location.reload(), 500);
+      }
       
       ${config.gui?.autoRefresh !== false ? `setTimeout(() => location.reload(), ${(config.gui?.refreshInterval || 300) * 1000});` : ''}
     </script>
