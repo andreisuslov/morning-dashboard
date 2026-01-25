@@ -8,13 +8,16 @@ services:
     volumes:
       # Mount config and credentials from host
       - ~/.config/morning-dashboard:/root/.config/morning-dashboard:ro
-      # Mount gog config for Gmail/Calendar auth
-      - ~/.config/gog:/root/.config/gog:ro
+      # Mount gog config for Gmail/Calendar auth (macOS path -> Linux path)
+      - ~/Library/Application Support/gogcli:/root/.config/gogcli:ro
       # Mount gh config for GitHub notifications (optional)
       - ~/.config/gh:/root/.config/gh:ro
     environment:
       - NODE_ENV=production
       - TZ=America/New_York
+      - DOCKER=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3141/"]
       interval: 30s

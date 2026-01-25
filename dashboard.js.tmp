@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Morning Dashboard v2.2
@@ -91,6 +91,61 @@ const DEFAULT_CONFIG = {
     showGreeting: true,
     showSummary: true,
   },
+  review: {
+    // Communication tracking
+    emails: { enabled: true },
+    slack: {
+      enabled: false,
+      tokenPath: '', // Path to slack token JSON file
+    },
+    xcom: {
+      enabled: false,
+      sshHost: '', // e.g., user@hostname
+      birdPath: '~/Code/bird',
+    },
+    // Meetings
+    fireflies: {
+      enabled: false,
+      apiKey: '',
+      speakerName: '', // Your name for speaker verification
+    },
+    // Output tracking
+    gitReposFolder: '~/Documents/Development', // Folder to scan for git repos
+    googleDocs: { enabled: true },
+    // Focus time
+    activityWatch: { enabled: true },
+    screenTime: {
+      enabled: true,
+      // If empty, queries local Mac. If set, uses SSH
+      sshHost: '',
+      scriptPath: '~/get_screentime.py',
+    },
+  },
+  // Native macOS integrations
+  appleCalendar: {
+    enabled: false, // Uses native Calendar.app via AppleScript
+    lookaheadDays: 7,
+    calendars: [], // Empty = all calendars
+  },
+  appleMail: {
+    enabled: false, // Uses native Mail.app via AppleScript
+    maxEmails: 10,
+    mailbox: 'INBOX',
+    account: '', // Empty = all accounts
+  },
+  // Financial tracking
+  stocks: {
+    enabled: false,
+    symbols: ['AAPL', 'MSFT', 'GOOGL'], // Stock symbols to track
+    showChange: true,
+  },
+  // Expense tracking
+  expenses: {
+    enabled: false,
+    // Uses receipt-tracker skill with Telegram → n8n → Sheets
+    googleSheetId: '',
+    showWeekly: true,
+  },
 };
 
 // ─── Configuration Management ────────────────────────────────────────────────
@@ -144,8 +199,9 @@ function deepMerge(target, source) {
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
-    command: null, // setup, gui, or null for dashboard
+    command: null, // setup, gui, review, or null for dashboard
     subcommand: null, // status, google, todoist, github
+    reviewDate: null, // date for review command
     help: false,
     version: false,
     compact: false,
@@ -167,6 +223,13 @@ function parseArgs() {
         break;
       case 'gui':
         options.command = 'gui';
+        break;
+      case 'review':
+        options.command = 'review';
+        // Check if next arg is a date (YYYY-MM-DD format)
+        if (args[i + 1] && /^\d{4}-\d{2}-\d{2}$/.test(args[i + 1])) {
+          options.reviewDate = args[++i];
+        }
         break;
       case '-h':
       case '--help':
@@ -229,10 +292,11 @@ function showHelp() {
   console.log(`
 ☀️  Morning Dashboard v${VERSION}
 
-Usage: 
+Usage:
   mdash                     Show dashboard in terminal
   mdash gui [--port <n>]    Launch web dashboard
   mdash setup [command]     Configure integrations
+  mdash review [YYYY-MM-DD] Daily performance review
 
 Dashboard Options:
   -h, --help          Show this help message
@@ -248,6 +312,9 @@ Section filters:
   --email             Show only emails
   --weather           Show only weather
   --github            Show only GitHub notifications
+  --stocks            Show only stocks
+  --apple-calendar    Show only Apple Calendar events
+  --apple-mail        Show only Apple Mail messages
 
 Setup Commands:
   mdash setup              Interactive setup wizard
@@ -256,10 +323,15 @@ Setup Commands:
   mdash setup todoist      Configure Todoist
   mdash setup github       Configure GitHub
   mdash setup weather      Configure weather location
+  mdash setup review       Configure daily review data sources
 
 GUI Options:
   mdash gui                Launch web dashboard
   mdash gui --port 8080    Use custom port (default: 3141)
+
+Review Options:
+  mdash review             Daily performance review (today)
+  mdash review 2026-01-15  Review for specific date
 
 Configuration:
   Config: ~/.config/morning-dashboard/config.json
@@ -268,6 +340,7 @@ Examples:
   mdash                    Full dashboard
   mdash setup              Run setup wizard
   mdash gui                Open web dashboard
+  mdash review             Daily performance review
   mdash --compact          Compact terminal view
   mdash --json             JSON output for scripting
 `);
@@ -368,6 +441,37 @@ function getDateRange(days) {
   return { from: start.toISOString(), to: end.toISOString() };
 }
 
+/**
+ * Convert Todoist task URLs from old format to new format
+ * Old: https://app.todoist.com/showTask?id=TASKID
+ * New: https://todoist.com/app/task/TASKID
+ */
+function todoistTaskUrl(taskIdOrUrl) {
+  if (!taskIdOrUrl) return null;
+
+  // If it's already a URL, transform it
+  if (typeof taskIdOrUrl === 'string' && taskIdOrUrl.includes('todoist.com')) {
+    // Old format: https://app.todoist.com/showTask?id=123
+    const showTaskMatch = taskIdOrUrl.match(/showTask\?id=(\d+)/);
+    if (showTaskMatch) {
+      return `https://todoist.com/app/task/${showTaskMatch[1]}`;
+    }
+    // Already new format or other format, return as-is
+    if (taskIdOrUrl.includes('/app/task/')) {
+      return taskIdOrUrl;
+    }
+    // Try to extract ID from any URL format
+    const idMatch = taskIdOrUrl.match(/(\d{10,})/);
+    if (idMatch) {
+      return `https://todoist.com/app/task/${idMatch[1]}`;
+    }
+    return taskIdOrUrl;
+  }
+
+  // If it's just an ID, construct the new URL
+  return `https://todoist.com/app/task/${taskIdOrUrl}`;
+}
+
 // ─── Setup & Integration Status ──────────────────────────────────────────────
 
 function checkGogInstalled() {
@@ -392,20 +496,6 @@ function getGoogleAccountServices(email) {
 }
 
 function checkGoogleSetup(config) {
-  // In Docker, check gog-proxy status
-  const isDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER === '1';
-  if (isDocker) {
-    const proxyUrl = process.env.GOG_PROXY_URL || 'http://host.docker.internal:3142';
-    try {
-      const result = exec(`curl -s --connect-timeout 2 "${proxyUrl}/google" 2>/dev/null`, { timeout: 5000 });
-      if (result) {
-        const data = JSON.parse(result);
-        if (data.status) return data.status;
-      }
-    } catch {}
-    return { installed: true, authenticated: false, account: null, services: [], proxyError: true };
-  }
-  
   if (!checkGogInstalled()) {
     return { installed: false, authenticated: false, account: null, services: [] };
   }
@@ -839,6 +929,151 @@ async function runSetupWeather(config) {
   }
 }
 
+async function runSetupReview(config) {
+  console.log(`\n${c.bold}🏆 Daily Review Setup${c.reset}\n`);
+  console.log(`Configure data sources for your daily performance review.\n`);
+  console.log(`${c.dim}${'─'.repeat(50)}${c.reset}\n`);
+
+  config.review = config.review || {};
+
+  // ─── Communication ───
+  console.log(`${c.bold}📬 Communication Tracking${c.reset}\n`);
+
+  // Emails (uses existing Google setup)
+  const googleCheck = checkGoogleSetup(config);
+  if (googleCheck.hasGmail) {
+    console.log(`${c.green}✓${c.reset} Emails: Using Google account (${googleCheck.account})`);
+    config.review.emails = { enabled: true };
+  } else {
+    console.log(`${c.yellow}○${c.reset} Emails: Google not configured (run: mdash setup google)`);
+    config.review.emails = { enabled: false };
+  }
+
+  // Slack
+  console.log();
+  const enableSlack = await prompt('Enable Slack message tracking? [y/N]: ');
+  if (enableSlack.toLowerCase() === 'y') {
+    const tokenPath = await prompt('Path to Slack token JSON file (or Enter to skip): ');
+    config.review.slack = {
+      enabled: !!tokenPath,
+      tokenPath: tokenPath || '',
+    };
+    if (tokenPath) {
+      console.log(`${c.green}✓${c.reset} Slack enabled`);
+    }
+  } else {
+    config.review.slack = { enabled: false, tokenPath: '' };
+    console.log(`${c.dim}Slack disabled${c.reset}`);
+  }
+
+  // X.com / Twitter
+  console.log();
+  const enableXcom = await prompt('Enable X.com/Twitter tracking (requires Bird CLI)? [y/N]: ');
+  if (enableXcom.toLowerCase() === 'y') {
+    const sshHost = await prompt('SSH host for Bird CLI (e.g., user@hostname, or Enter for local): ');
+    const birdPath = await prompt('Bird CLI path [~/Code/bird]: ') || '~/Code/bird';
+    config.review.xcom = {
+      enabled: true,
+      sshHost: sshHost || '',
+      birdPath,
+    };
+    console.log(`${c.green}✓${c.reset} X.com enabled${sshHost ? ' via SSH to ' + sshHost : ' (local)'}`);
+  } else {
+    config.review.xcom = { enabled: false, sshHost: '', birdPath: '' };
+    console.log(`${c.dim}X.com disabled${c.reset}`);
+  }
+
+  // ─── Meetings ───
+  console.log(`\n${c.bold}📅 Meetings${c.reset}\n`);
+
+  const enableFireflies = await prompt('Enable Fireflies meeting tracking? [y/N]: ');
+  if (enableFireflies.toLowerCase() === 'y') {
+    const apiKey = await prompt('Fireflies API key: ');
+    const speakerName = await prompt('Your name (for speaker verification): ');
+    config.review.fireflies = {
+      enabled: !!apiKey,
+      apiKey: apiKey || '',
+      speakerName: speakerName || '',
+    };
+    if (apiKey) {
+      console.log(`${c.green}✓${c.reset} Fireflies enabled`);
+    }
+  } else {
+    config.review.fireflies = { enabled: false, apiKey: '', speakerName: '' };
+    console.log(`${c.dim}Fireflies disabled${c.reset}`);
+  }
+
+  // ─── Output ───
+  console.log(`\n${c.bold}💻 Output Tracking${c.reset}\n`);
+
+  // Git repos folder
+  const currentFolder = config.review?.gitReposFolder || '~/Documents/Development';
+  console.log(`Current git repos folder: ${currentFolder}`);
+  const gitFolder = await prompt(`Git repos folder [${currentFolder}]: `) || currentFolder;
+  const expandedFolder = gitFolder.replace(/^~/, os.homedir());
+
+  if (fs.existsSync(expandedFolder)) {
+    config.review.gitReposFolder = gitFolder;
+    // Count repos in folder
+    const findCmd = `find "${expandedFolder}" -maxdepth 2 -type d -name ".git" 2>/dev/null | wc -l`;
+    const repoCount = exec(findCmd, { timeout: 5000 })?.trim() || '0';
+    console.log(`${c.green}✓${c.reset} Found ${repoCount} git repos in ${gitFolder}`);
+  } else {
+    console.log(`${c.yellow}⚠${c.reset} Folder not found, using default`);
+    config.review.gitReposFolder = '~/Documents/Development';
+  }
+
+  // Google Docs
+  if (googleCheck.authenticated) {
+    config.review.googleDocs = { enabled: true };
+    console.log(`${c.green}✓${c.reset} Google Docs: enabled`);
+  } else {
+    config.review.googleDocs = { enabled: false };
+  }
+
+  // ─── Focus Time ───
+  console.log(`\n${c.bold}⏱️ Focus Time${c.reset}\n`);
+
+  // ActivityWatch
+  const awRunning = exec(`curl -sL 'http://127.0.0.1:5600/api/0/info' 2>/dev/null`, { timeout: 2000 });
+  if (awRunning) {
+    console.log(`${c.green}✓${c.reset} ActivityWatch: detected and running`);
+    config.review.activityWatch = { enabled: true };
+  } else {
+    const enableAW = await prompt('Enable ActivityWatch (not currently running)? [Y/n]: ');
+    config.review.activityWatch = { enabled: enableAW.toLowerCase() !== 'n' };
+    if (config.review.activityWatch.enabled) {
+      console.log(`${c.yellow}○${c.reset} ActivityWatch: enabled (start it to collect data)`);
+    } else {
+      console.log(`${c.dim}ActivityWatch disabled${c.reset}`);
+    }
+  }
+
+  // Screen Time
+  console.log();
+  const enableScreenTime = await prompt('Enable macOS Screen Time tracking? [Y/n]: ');
+  if (enableScreenTime.toLowerCase() !== 'n') {
+    const sshHost = await prompt('SSH host (Enter for local Mac): ');
+    config.review.screenTime = {
+      enabled: true,
+      sshHost: sshHost || '',
+      scriptPath: '~/get_screentime.py',
+    };
+    console.log(`${c.green}✓${c.reset} Screen Time: enabled${sshHost ? ' via SSH to ' + sshHost : ' (local)'}`);
+  } else {
+    config.review.screenTime = { enabled: false, sshHost: '', scriptPath: '' };
+    console.log(`${c.dim}Screen Time disabled${c.reset}`);
+  }
+
+  // Save config
+  saveConfig(config);
+
+  console.log(`\n${c.dim}${'─'.repeat(50)}${c.reset}`);
+  console.log(`\n${c.green}✓${c.reset} Daily Review configuration saved!`);
+  console.log(`  Config: ${CONFIG_PATH}`);
+  console.log(`\n  Run ${c.cyan}mdash review${c.reset} to generate your daily review.\n`);
+}
+
 async function runSetupWizard(config) {
   console.log(`\n${c.bold}☀️  Morning Dashboard Setup Wizard${c.reset}\n`);
   console.log(`This will help you configure your integrations.\n`);
@@ -896,49 +1131,14 @@ async function runSetupWizard(config) {
 
 // ─── Data Fetchers ───────────────────────────────────────────────────────────
 
-// Cache for gog-proxy data (fetched once per request cycle in Docker)
-let gogProxyCache = null;
-let gogProxyCacheTime = 0;
-const GOG_PROXY_CACHE_MS = 30000; // 30 seconds
-
-function fetchFromGogProxy() {
-  const isDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER === '1';
-  if (!isDocker) return null;
-  
-  // Check cache
-  if (gogProxyCache && (Date.now() - gogProxyCacheTime) < GOG_PROXY_CACHE_MS) {
-    return gogProxyCache;
-  }
-  
-  // Try to fetch from gog-proxy running on host
-  const proxyUrl = process.env.GOG_PROXY_URL || 'http://host.docker.internal:3142';
-  try {
-    const result = exec(`curl -s --connect-timeout 2 "${proxyUrl}/google" 2>/dev/null`, { timeout: 5000 });
-    if (result) {
-      gogProxyCache = JSON.parse(result);
-      gogProxyCacheTime = Date.now();
-      return gogProxyCache;
-    }
-  } catch {}
-  return null;
-}
-
 function fetchEmails(config) {
   if (!config.gmail?.enabled) return [];
-  
-  // Try gog-proxy first (for Docker environments)
-  const proxyData = fetchFromGogProxy();
-  if (proxyData?.email) {
-    return proxyData.email;
-  }
   
   const account = config.google?.account;
   const accountFlag = account ? `--account ${account}` : '';
   
   const raw = exec(`gog gmail search '${config.gmail.query}' --max ${config.gmail.maxEmails} ${accountFlag} --json 2>/dev/null`);
-  const data = parseJSON(raw);
-  // gog returns {threads: [...]} or {messages: [...]} or direct array
-  const emails = data?.threads || data?.messages || (Array.isArray(data) ? data : []);
+  const emails = parseJSON(raw);
   if (!emails || !Array.isArray(emails)) return [];
   
   return emails.map(e => ({
@@ -973,46 +1173,8 @@ function markEmailAsRead(config, emailId) {
   return { success: true };
 }
 
-// Archive email (remove from inbox)
-function archiveEmail(config, threadId) {
-  const account = config.google?.account;
-  const accountFlag = account ? `--account ${account}` : '';
-  
-  exec(`gog gmail thread modify ${threadId} --remove INBOX ${accountFlag} --force 2>/dev/null`);
-  return { success: true };
-}
-
-// Trash email
-function trashEmail(config, threadId) {
-  const account = config.google?.account;
-  const accountFlag = account ? `--account ${account}` : '';
-  
-  exec(`gog gmail thread modify ${threadId} --add TRASH --remove INBOX ${accountFlag} --force 2>/dev/null`);
-  return { success: true };
-}
-
 function fetchCalendarEvents(config, options = {}) {
   if (!config.calendar?.enabled) return [];
-  
-  // Try gog-proxy first (for Docker environments)
-  const proxyData = fetchFromGogProxy();
-  if (proxyData?.calendar) {
-    const events = proxyData.calendar;
-    return events.map(e => ({
-      id: e.id,
-      summary: e.summary || '(no title)',
-      description: e.description || '',
-      start: e.start?.dateTime || e.start?.date,
-      end: e.end?.dateTime || e.end?.date,
-      location: e.location,
-      allDay: !e.start?.dateTime,
-      meetLink: e.hangoutLink || e.conferenceData?.entryPoints?.[0]?.uri,
-      attendees: e.attendees || [],
-      organizer: e.organizer,
-      status: e.status,
-      htmlLink: e.htmlLink,
-    })).sort((a, b) => new Date(a.start) - new Date(b.start));
-  }
   
   const account = config.google?.account;
   const accountFlag = account ? `--account ${account}` : '';
@@ -1031,9 +1193,7 @@ function fetchCalendarEvents(config, options = {}) {
   to.setHours(23, 59, 59, 999);
   
   const raw = exec(`gog calendar events ${config.calendar.id} --from "${from.toISOString()}" --to "${to.toISOString()}" ${accountFlag} --json 2>/dev/null`);
-  const data = parseJSON(raw);
-  // gog returns {events: [...]} or direct array
-  const events = data?.events || (Array.isArray(data) ? data : []);
+  const events = parseJSON(raw);
   if (!events || !Array.isArray(events)) return [];
 
   return events
@@ -1089,6 +1249,7 @@ function fetchTasks(config) {
     projectId: t.project_id,
     labels: t.labels || [],
     isOverdue: t.due?.date && t.due.date < today,
+    url: todoistTaskUrl(t.url || t.id), // Transform old showTask URLs to new format
   });
   
   const overdue = allTasks
@@ -1218,6 +1379,162 @@ function calculateFocusTime(events, config) {
   return focusBlocks.slice(0, 3);
 }
 
+// ─── Native macOS Integrations ────────────────────────────────────────────────
+
+const APPLE_CALENDAR_SCRIPT = path.join(os.homedir(), 'clawd/skills/apple-calendar/scripts/cal-events.sh');
+const APPLE_MAIL_SCRIPT = path.join(os.homedir(), 'clawd/skills/apple-mail/scripts/mail-list.sh');
+
+function fetchAppleCalendarEvents(config) {
+  if (!config.appleCalendar?.enabled) return [];
+
+  const scriptPath = APPLE_CALENDAR_SCRIPT;
+  if (!fs.existsSync(scriptPath)) return [];
+
+  const days = config.appleCalendar.lookaheadDays || 7;
+  const calendars = config.appleCalendar.calendars || [];
+
+  try {
+    let allEvents = [];
+
+    if (calendars.length === 0) {
+      // Fetch from all calendars
+      const raw = exec(`bash "${scriptPath}" ${days}`, { timeout: 10000 });
+      if (raw && !raw.includes('No events found')) {
+        allEvents = parseAppleCalendarOutput(raw);
+      }
+    } else {
+      // Fetch from specific calendars
+      for (const cal of calendars) {
+        const raw = exec(`bash "${scriptPath}" ${days} "${cal}"`, { timeout: 10000 });
+        if (raw && !raw.includes('No events found') && !raw.includes('Error:')) {
+          allEvents = allEvents.concat(parseAppleCalendarOutput(raw));
+        }
+      }
+    }
+
+    // Sort by start date
+    return allEvents.sort((a, b) => new Date(a.start) - new Date(b.start));
+  } catch (e) {
+    return [];
+  }
+}
+
+function parseAppleCalendarOutput(raw) {
+  if (!raw) return [];
+  return raw.trim().split('\n').filter(Boolean).map(line => {
+    const parts = line.split(' | ');
+    if (parts.length < 5) return null;
+    const [uid, summary, start, end, allDay, location, calendar] = parts;
+    return {
+      id: uid?.trim(),
+      title: summary?.trim(),
+      start: start?.trim(),
+      end: end?.trim(),
+      allDay: allDay?.trim() === 'true',
+      location: location?.trim() || null,
+      calendar: calendar?.trim(),
+      source: 'apple',
+    };
+  }).filter(Boolean);
+}
+
+function fetchAppleMailMessages(config) {
+  if (!config.appleMail?.enabled) return [];
+
+  const scriptPath = APPLE_MAIL_SCRIPT;
+  if (!fs.existsSync(scriptPath)) return [];
+
+  const mailbox = config.appleMail.mailbox || 'INBOX';
+  const account = config.appleMail.account || '';
+  const limit = config.appleMail.maxEmails || 10;
+
+  try {
+    const raw = exec(`bash "${scriptPath}" "${mailbox}" "${account}" ${limit}`, { timeout: 15000 });
+    if (!raw) return [];
+
+    return raw.trim().split('\n').filter(Boolean).map(line => {
+      const parts = line.split(' | ');
+      if (parts.length < 5) return null;
+      const [id, readStatus, date, sender, subject] = parts;
+      return {
+        id: id?.trim(),
+        unread: readStatus?.trim() === '●',
+        date: date?.trim(),
+        sender: sender?.trim(),
+        subject: subject?.trim(),
+        source: 'apple',
+      };
+    }).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+}
+
+// ─── Stock Market Data ────────────────────────────────────────────────────────
+
+function fetchStockPrices(config) {
+  if (!config.stocks?.enabled) return [];
+
+  const symbols = config.stocks.symbols || [];
+  if (symbols.length === 0) return [];
+
+  // Write Python script to temp file and execute
+  const pythonScript = `
+import sys
+try:
+    import yfinance as yf
+    import json
+    symbols = sys.argv[1].split(',')
+    result = []
+    for sym in symbols:
+        try:
+            ticker = yf.Ticker(sym)
+            info = ticker.fast_info
+            hist = ticker.history(period='2d')
+            if len(hist) >= 2:
+                prev_close = hist['Close'].iloc[-2]
+                current = hist['Close'].iloc[-1]
+                change = ((current - prev_close) / prev_close) * 100
+            else:
+                current = getattr(info, 'last_price', 0) or 0
+                change = 0
+            result.append({
+                'symbol': sym,
+                'price': round(current, 2),
+                'change': round(change, 2),
+                'currency': getattr(info, 'currency', 'USD') or 'USD',
+            })
+        except Exception as e:
+            result.append({'symbol': sym, 'price': 0, 'change': 0, 'error': str(e)})
+    print(json.dumps(result))
+except ImportError:
+    print('[]')
+`;
+
+  try {
+    const symbolList = symbols.join(',');
+    const scriptPath = '/tmp/mdash_stocks.py';
+    fs.writeFileSync(scriptPath, pythonScript);
+    const raw = exec(`python3 "${scriptPath}" "${symbolList}"`, { timeout: 30000 });
+    return parseJSON(raw) || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// ─── Expense Tracking ─────────────────────────────────────────────────────────
+
+function fetchExpenseSummary(config) {
+  if (!config.expenses?.enabled) return null;
+
+  // This integrates with receipt-tracker skill
+  // For now, return placeholder - would need Google Sheets API integration
+  return {
+    enabled: config.expenses.enabled,
+    message: 'Configure Google Sheet ID for expense tracking',
+  };
+}
+
 function fetchAllData(config) {
   const emails = fetchEmails(config);
   const events = fetchCalendarEvents(config);
@@ -1227,7 +1544,13 @@ function fetchAllData(config) {
   const systemHealth = fetchSystemHealth(config);
   const focusBlocks = calculateFocusTime(events, config);
   const quote = getDailyQuote();
-  
+
+  // New integrations
+  const appleCalendar = fetchAppleCalendarEvents(config);
+  const appleMail = fetchAppleMailMessages(config);
+  const stocks = fetchStockPrices(config);
+  const expenses = fetchExpenseSummary(config);
+
   return {
     timestamp: new Date().toISOString(),
     greeting: getGreeting(),
@@ -1238,6 +1561,11 @@ function fetchAllData(config) {
     weather,
     github,
     system: systemHealth,
+    // New integrations
+    appleCalendar,
+    appleMail,
+    stocks,
+    expenses,
   };
 }
 
@@ -1455,13 +1783,73 @@ function renderGitHub(notifications, config) {
 
   const lines = [];
   const icons = { PullRequest: '🔀', Issue: '🐛', Release: '🏷️', Discussion: '💬' };
-  
+
   for (const n of notifications) {
     const icon = icons[n.type] || '📌';
     lines.push(`${icon} ${c.dim}${truncate(n.repo, 20)}${c.reset} ${truncate(n.title, config.display.width - 30)}`);
   }
 
   console.log(box(`🐙 GITHUB (${notifications.length})`, lines.join('\n'), c.gray, config));
+}
+
+function renderStocks(stocks, config) {
+  if (!stocks || stocks.length === 0) return;
+
+  const lines = [];
+  for (const s of stocks) {
+    if (s.error) {
+      lines.push(`${c.dim}${s.symbol}: Error${c.reset}`);
+      continue;
+    }
+    const changeColor = s.change >= 0 ? c.green : c.red;
+    const changeSign = s.change >= 0 ? '+' : '';
+    const arrow = s.change >= 0 ? '↑' : '↓';
+    lines.push(`${c.bold}${s.symbol}${c.reset}: $${s.price.toFixed(2)} ${changeColor}${arrow} ${changeSign}${s.change.toFixed(2)}%${c.reset}`);
+  }
+
+  console.log(box('📈 STOCKS', lines.join('\n'), c.cyan, config));
+}
+
+function renderAppleCalendar(events, config) {
+  if (!events || events.length === 0) return;
+
+  const lines = [];
+  const today = new Date().toDateString();
+
+  for (const e of events.slice(0, config.display.maxEventsShown || 8)) {
+    const startDate = new Date(e.start);
+    const isToday = startDate.toDateString() === today;
+    const dateStr = isToday ? 'Today' : startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+    if (e.allDay) {
+      lines.push(`${c.dim}${dateStr}${c.reset} ${c.magenta}All Day${c.reset} ${truncate(e.title, config.display.width - 25)}`);
+    } else {
+      const time = startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      lines.push(`${c.dim}${dateStr}${c.reset} ${c.blue}${time}${c.reset} ${truncate(e.title, config.display.width - 25)}`);
+    }
+    if (e.location) {
+      lines.push(`  ${c.dim}📍 ${truncate(e.location, config.display.width - 8)}${c.reset}`);
+    }
+  }
+
+  console.log(box(`🍎 APPLE CALENDAR (${events.length})`, lines.join('\n'), c.magenta, config));
+}
+
+function renderAppleMail(emails, config) {
+  if (!emails || emails.length === 0) return;
+
+  const unreadCount = emails.filter(e => e.unread).length;
+  const lines = [];
+
+  for (const e of emails.slice(0, config.display.maxEmailsShown || 6)) {
+    const marker = e.unread ? `${c.cyan}●${c.reset}` : `${c.dim}○${c.reset}`;
+    const sender = truncate(e.sender?.replace(/<.*>/, '').trim() || 'Unknown', 20);
+    const subject = truncate(e.subject || '(No Subject)', config.display.width - 28);
+    lines.push(`${marker} ${c.dim}${sender}${c.reset} ${subject}`);
+  }
+
+  const title = unreadCount > 0 ? `📮 APPLE MAIL (${unreadCount} unread)` : `📮 APPLE MAIL`;
+  console.log(box(title, lines.join('\n'), c.cyan, config));
 }
 
 function renderFooter(stats, config) {
@@ -1538,23 +1926,16 @@ function generateHTML(data, config, status) {
         lastDate = eventDate;
         const d = new Date(e.start);
         let dateLabel;
-        let dateId = '';
-        if (eventDate === today) { dateLabel = 'Today'; dateId = ' id="today-header"'; }
+        if (eventDate === today) dateLabel = 'Today';
         else if (eventDate === tomorrow) dateLabel = 'Tomorrow';
         else if (eventDate === yesterday) dateLabel = 'Yesterday';
         else dateLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        html += '<div class="date-group"' + dateId + '>' + dateLabel + '</div>';
+        html += '<div class="date-group">' + dateLabel + '</div>';
       }
       
       const eventTime = e.allDay ? 'All day' : formatTimeLong(new Date(e.start));
       
-      // Store event data for hover actions
-      const eventDataAttr = 'data-event-id="' + encodeURIComponent(e.id) + '"';
-      const hasMeetLink = e.meetLink ? 'data-meet-link="' + escapeHtml(e.meetLink) + '"' : '';
-      const hasCalLink = e.htmlLink ? 'data-cal-link="' + escapeHtml(e.htmlLink) + '"' : '';
-      const hasLocation = e.location ? 'data-location="' + escapeHtml(e.location) + '"' : '';
-      
-      html += '<div class="list-item clickable" ' + eventDataAttr + ' ' + hasMeetLink + ' ' + hasCalLink + ' ' + hasLocation + ' onclick="openEventDetail(\'' + encodeURIComponent(e.id) + '\')">';
+      html += '<div class="list-item clickable" onclick="openEventDetail(\'' + encodeURIComponent(e.id) + '\')">';
       html += '  <div class="event-time ' + (e.allDay ? 'all-day' : '') + ' ' + (isPast ? 'past' : '') + '">' + eventTime + '</div>';
       html += '  <div class="list-item-content">';
       html += '    <div class="list-item-title ' + (isPast ? 'dimmed' : '') + '">' + escapeHtml(e.summary) + '</div>';
@@ -1562,21 +1943,6 @@ function generateHTML(data, config, status) {
         html += '    <div class="list-item-meta">📍 ' + escapeHtml(e.location) + '</div>';
       }
       html += '  </div>';
-      
-      // Hover action buttons
-      html += '  <div class="list-item-actions">';
-      if (e.meetLink) {
-        html += '    <a href="' + escapeHtml(e.meetLink) + '" target="_blank" class="action-btn primary" onclick="event.stopPropagation()" title="Join Meeting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l5-3v10l-5-3V10zM4 6h10a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg></a>';
-      }
-      if (e.htmlLink) {
-        html += '    <a href="' + escapeHtml(e.htmlLink) + '" target="_blank" class="action-btn" onclick="event.stopPropagation()" title="Open in Calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg></a>';
-      }
-      if (e.location) {
-        html += '    <button class="action-btn" onclick="event.stopPropagation(); openMaps(\'' + escapeHtml(e.location.replace(/'/g, "\\'")) + '\')" title="Open in Maps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></button>';
-      }
-      html += '    <button class="action-btn" onclick="event.stopPropagation(); copyEventLink(\'' + encodeURIComponent(e.id) + '\')" title="Copy Link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg></button>';
-      html += '  </div>';
-      
       if (isNext) {
         html += '  <span class="list-item-badge list-item-badge-success">Next</span>';
       }
@@ -2227,63 +2593,6 @@ function generateHTML(data, config, status) {
       color: var(--success);
     }
     
-    /* Hover Actions */
-    .list-item-actions {
-      display: none;
-      gap: 4px;
-      margin-left: auto;
-      flex-shrink: 0;
-    }
-    
-    .list-item:hover .list-item-actions {
-      display: flex;
-    }
-    
-    .list-item:hover .list-item-badge {
-      display: none;
-    }
-    
-    .action-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-      border: none;
-      background: var(--background-secondary);
-      color: var(--foreground-muted);
-      cursor: pointer;
-      transition: all 100ms;
-      font-size: 12px;
-    }
-    
-    .action-btn:hover {
-      background: var(--accent);
-      color: white;
-    }
-    
-    .action-btn.primary {
-      background: var(--accent);
-      color: white;
-    }
-    
-    .action-btn.primary:hover {
-      opacity: 0.85;
-    }
-    
-    .action-btn svg {
-      width: 14px;
-      height: 14px;
-    }
-    
-    .action-btn-text {
-      width: auto;
-      padding: 0 10px;
-      font-size: 11px;
-      font-weight: 500;
-    }
-    
     /* Priority */
     .priority-4 { color: var(--destructive); }
     .priority-3 { color: var(--warning); }
@@ -2634,7 +2943,59 @@ function generateHTML(data, config, status) {
     .setting-input:focus {
       border-color: var(--accent);
     }
-    
+
+    /* Settings tabs */
+    .settings-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+
+    .settings-tab {
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--foreground-muted);
+      cursor: pointer;
+      transition: all 100ms;
+    }
+
+    .settings-tab:hover {
+      color: var(--foreground);
+    }
+
+    .settings-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0;
+      font-size: 14px;
+      color: var(--foreground);
+    }
+
+    .setting-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
     .setting-input::placeholder {
       color: var(--foreground-subtle);
     }
@@ -2880,19 +3241,6 @@ function generateHTML(data, config, status) {
       border-bottom: 1px solid var(--border);
     }
     
-    /* Skeleton Loading */
-    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-    .skeleton { background: linear-gradient(90deg, var(--background-tertiary) 25%, var(--border) 50%, var(--background-tertiary) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
-    .skeleton-text { height: 14px; margin-bottom: 8px; }
-    .skeleton-text-sm { height: 12px; width: 60%; }
-    .skeleton-item { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
-    .skeleton-item:last-child { border-bottom: none; }
-    .skeleton-circle { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; }
-    .skeleton-content { flex: 1; }
-    .skeleton-badge { width: 60px; height: 22px; border-radius: 9999px; }
-    .fade-in { animation: fadeIn 0.2s ease-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    
     /* Responsive */
     @media (max-width: 840px) {
       .app { padding: 20px 16px; }
@@ -3037,16 +3385,11 @@ function generateHTML(data, config, status) {
             <div class="empty-text">Inbox zero!</div>
           </div>
           ` : data.email.map(e => `
-          <div class="list-item clickable" onclick="openEmailDetail('${e.id}')" data-thread-id="${e.threadId}">
+          <div class="list-item clickable" onclick="openEmailDetail('${e.id}')">
             <div class="list-item-indicator">${icons.mail}</div>
             <div class="list-item-content">
               <div class="list-item-title">${escapeHtml(e.subject)}</div>
               <div class="list-item-meta">${escapeHtml(e.from)}</div>
-            </div>
-            <div class="list-item-actions">
-              <button class="action-btn" onclick="event.stopPropagation(); archiveEmail('${e.threadId}', this)" title="Archive"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg></button>
-              <button class="action-btn" onclick="event.stopPropagation(); trashEmail('${e.threadId}', this)" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
-              <a href="https://mail.google.com/mail/u/0/#inbox/${e.threadId}" target="_blank" class="action-btn" onclick="event.stopPropagation()" title="Open in Gmail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg></a>
             </div>
           </div>
           `).join('')}
@@ -3116,7 +3459,83 @@ function generateHTML(data, config, status) {
         </div>
       </div>
       ` : ''}
-    
+
+      <!-- Stocks -->
+      ${data.stocks && data.stocks.length > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">${icons.chart || '📈'}</div>
+            <span>Stocks</span>
+          </div>
+          <span class="badge">${data.stocks.length} symbols</span>
+        </div>
+        <div class="card-body">
+          ${data.stocks.map(s => `
+          <div class="list-item">
+            <div class="list-item-indicator" style="font-weight: 600;">${escapeHtml(s.symbol)}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">$${s.price?.toFixed(2) || '0.00'}</div>
+              <div class="list-item-meta" style="color: ${(s.change || 0) >= 0 ? 'var(--success)' : 'var(--warning)'}">
+                ${(s.change || 0) >= 0 ? '↑' : '↓'} ${(s.change || 0) >= 0 ? '+' : ''}${(s.change || 0).toFixed(2)}%
+              </div>
+            </div>
+          </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      <!-- Apple Calendar -->
+      ${data.appleCalendar && data.appleCalendar.length > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">🍎</div>
+            <span>Apple Calendar</span>
+          </div>
+          <span class="badge">${data.appleCalendar.length} events</span>
+        </div>
+        <div class="card-body">
+          ${data.appleCalendar.slice(0, 8).map(e => `
+          <div class="list-item">
+            <div class="list-item-indicator">${e.allDay ? '📅' : '🕐'}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">${escapeHtml(e.title || '')}</div>
+              <div class="list-item-meta">${e.allDay ? 'All Day' : escapeHtml(e.start || '')}${e.location ? ' • ' + escapeHtml(e.location) : ''}</div>
+            </div>
+          </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      <!-- Apple Mail -->
+      ${data.appleMail && data.appleMail.length > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">📮</div>
+            <span>Apple Mail</span>
+          </div>
+          <span class="badge">${data.appleMail.filter(e => e.unread).length} unread</span>
+        </div>
+        <div class="card-body">
+          ${data.appleMail.slice(0, 6).map(e => `
+          <div class="list-item">
+            <div class="list-item-indicator" style="color: ${e.unread ? 'var(--accent)' : 'var(--foreground-subtle)'}">${e.unread ? '●' : '○'}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">${escapeHtml(e.subject || '(No Subject)')}</div>
+              <div class="list-item-meta">${escapeHtml((e.sender || '').replace(/<.*>/, '').trim())}</div>
+            </div>
+          </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+    </div>
+
     <footer class="footer">
       ${hasAnything ? `
       <div class="summary">
@@ -3125,6 +3544,7 @@ function generateHTML(data, config, status) {
         ${totalEvents > 0 ? `<div class="summary-item"><span class="summary-count accent">${totalEvents}</span><span class="summary-label">events</span></div>` : ''}
         ${totalEmails > 0 ? `<div class="summary-item"><span class="summary-count muted">${totalEmails}</span><span class="summary-label">emails</span></div>` : ''}
         ${totalGithub > 0 ? `<div class="summary-item"><span class="summary-count muted">${totalGithub}</span><span class="summary-label">notifications</span></div>` : ''}
+        ${data.stocks && data.stocks.length > 0 ? `<div class="summary-item"><span class="summary-count muted">${data.stocks.length}</span><span class="summary-label">stocks</span></div>` : ''}
       </div>
       ` : `<div class="all-clear">✨ All clear! Have a great day.</div>`}
       <div class="footer-meta">
@@ -3139,36 +3559,143 @@ function generateHTML(data, config, status) {
   
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
-      <div class="modal">
+      <div class="modal" style="max-width: 600px; max-height: 85vh;">
         <div class="modal-header">
           <h2 class="modal-title">Settings</h2>
           <button class="modal-close" onclick="closeSettings()">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13.5 4.5l-9 9M4.5 4.5l9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
         </div>
-        <div class="modal-body">
-          <div class="setting-group">
-            <label class="setting-label">Temperature Units</label>
-            <p class="setting-description">Choose between Fahrenheit and Celsius</p>
-            <div class="toggle-group">
-              <button class="toggle-option ${config.weather?.units === 'imperial' ? 'active' : ''}" onclick="setWeatherUnits('imperial')">°F Fahrenheit</button>
-              <button class="toggle-option ${config.weather?.units === 'metric' ? 'active' : ''}" onclick="setWeatherUnits('metric')">°C Celsius</button>
+        <div class="settings-tabs">
+          <button class="settings-tab active" onclick="switchTab('dashboard')">Dashboard</button>
+          <button class="settings-tab" onclick="switchTab('review')">Daily Review</button>
+          <button class="settings-tab" onclick="switchTab('integrations')">Integrations</button>
+        </div>
+        <div class="modal-body" style="overflow-y: auto; max-height: 60vh;">
+          <!-- Dashboard Tab -->
+          <div id="tab-dashboard" class="tab-content active">
+            <div class="setting-group">
+              <label class="setting-label">Temperature Units</label>
+              <p class="setting-description">Choose between Fahrenheit and Celsius</p>
+              <div class="toggle-group">
+                <button class="toggle-option ${config.weather?.units === 'imperial' ? 'active' : ''}" onclick="setWeatherUnits('imperial')">°F Fahrenheit</button>
+                <button class="toggle-option ${config.weather?.units === 'metric' ? 'active' : ''}" onclick="setWeatherUnits('metric')">°C Celsius</button>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Weather Location</label>
+              <p class="setting-description">City name, ZIP code, or leave empty for auto-detect</p>
+              <input type="text" class="setting-input" id="weatherLocation" placeholder="e.g., New York, 10001, or auto" value="${config.weather?.location || ''}">
+              <button style="margin-top: 8px; padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500;" onclick="saveLocation()">Save Location</button>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Auto Refresh</label>
+              <p class="setting-description">Automatically refresh data every 5 minutes</p>
+              <div class="toggle-group">
+                <button class="toggle-option ${config.gui?.autoRefresh !== false ? 'active' : ''}" onclick="setAutoRefresh(true)">On</button>
+                <button class="toggle-option ${config.gui?.autoRefresh === false ? 'active' : ''}" onclick="setAutoRefresh(false)">Off</button>
+              </div>
             </div>
           </div>
-          
-          <div class="setting-group">
-            <label class="setting-label">Weather Location</label>
-            <p class="setting-description">City name, ZIP code, or leave empty for auto-detect</p>
-            <input type="text" class="setting-input" id="weatherLocation" placeholder="e.g., New York, 10001, or auto" value="${config.weather?.location || ''}">
-            <button style="margin-top: 8px; padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500;" onclick="saveLocation()">Save Location</button>
+
+          <!-- Review Tab -->
+          <div id="tab-review" class="tab-content">
+            <div class="setting-group">
+              <label class="setting-label">📬 Communication</label>
+              <div class="setting-row"><input type="checkbox" id="r-emails" ${config.review?.emails?.enabled !== false ? 'checked' : ''}><span>Track emails sent (via Google)</span></div>
+              <div class="setting-row"><input type="checkbox" id="r-slack" ${config.review?.slack?.enabled ? 'checked' : ''}><span>Track Slack messages</span></div>
+              <input type="text" class="setting-input" id="r-slack-path" placeholder="Slack token path" value="${escapeHtml(config.review?.slack?.tokenPath || '')}" style="margin-top: 4px; ${config.review?.slack?.enabled ? '' : 'display:none;'}">
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">💻 Output</label>
+              <p class="setting-description">Git repos folder (auto-scans for repos)</p>
+              <input type="text" class="setting-input" id="r-git-folder" placeholder="~/Documents/Development" value="${escapeHtml(config.review?.gitReposFolder || '~/Documents/Development')}">
+              <div class="setting-row" style="margin-top: 8px;"><input type="checkbox" id="r-docs" ${config.review?.googleDocs?.enabled !== false ? 'checked' : ''}><span>Track Google Docs modifications</span></div>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">⏱️ Focus Time</label>
+              <div class="setting-row"><input type="checkbox" id="r-aw" ${config.review?.activityWatch?.enabled !== false ? 'checked' : ''}><span>ActivityWatch (app tracking)</span></div>
+              <div class="setting-row"><input type="checkbox" id="r-screentime" ${config.review?.screenTime?.enabled ? 'checked' : ''}><span>macOS Screen Time</span></div>
+            </div>
+
+            <button style="margin-top: 12px; padding: 10px 20px; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer; font-size: 14px; font-weight: 500; width: 100%;" onclick="saveReviewSettings()">Save Review Settings</button>
           </div>
-          
-          <div class="setting-group">
-            <label class="setting-label">Auto Refresh</label>
-            <p class="setting-description">Automatically refresh data every 5 minutes</p>
-            <div class="toggle-group">
-              <button class="toggle-option ${config.gui?.autoRefresh !== false ? 'active' : ''}" onclick="setAutoRefresh(true)">On</button>
-              <button class="toggle-option ${config.gui?.autoRefresh === false ? 'active' : ''}" onclick="setAutoRefresh(false)">Off</button>
+
+          <!-- Integrations Tab -->
+          <div id="tab-integrations" class="tab-content">
+            <div class="setting-group">
+              <label class="setting-label">Google (Gmail + Calendar)</label>
+              <p class="setting-description" style="color: ${status.google.authenticated ? 'var(--success)' : 'var(--warning)'}">
+                ${status.google.authenticated ? '✓ Connected: ' + status.google.account : '○ Not connected'}
+              </p>
+              ${!status.google.authenticated ? '<p class="setting-description">Run: <code style="background: var(--background-tertiary); padding: 2px 6px; border-radius: 4px;">mdash setup google</code></p>' : ''}
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Todoist</label>
+              <p class="setting-description" style="color: ${status.todoist.working ? 'var(--success)' : 'var(--warning)'}">
+                ${status.todoist.working ? '✓ Connected' : '○ Not configured'}
+              </p>
+              ${!status.todoist.working ? '<p class="setting-description">Run: <code style="background: var(--background-tertiary); padding: 2px 6px; border-radius: 4px;">mdash setup todoist</code></p>' : ''}
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">GitHub</label>
+              <p class="setting-description" style="color: ${status.github.authenticated ? 'var(--success)' : 'var(--foreground-muted)'}">
+                ${status.github.authenticated ? '✓ Connected: ' + status.github.user : '○ Not connected (optional)'}
+              </p>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+            <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--foreground);">Native macOS Integrations</h3>
+
+            <div class="setting-group">
+              <label class="setting-label">Apple Calendar</label>
+              <p class="setting-description" style="color: ${config.appleCalendar?.enabled ? 'var(--success)' : 'var(--foreground-muted)'}">
+                ${config.appleCalendar?.enabled ? '✓ Enabled' : '○ Disabled'}
+              </p>
+              <div class="toggle-group" style="margin-top: 8px;">
+                <button class="toggle-option ${config.appleCalendar?.enabled ? 'active' : ''}" onclick="toggleIntegration('appleCalendar', true)">Enable</button>
+                <button class="toggle-option ${!config.appleCalendar?.enabled ? 'active' : ''}" onclick="toggleIntegration('appleCalendar', false)">Disable</button>
+              </div>
+              <p class="setting-description" style="font-size: 11px; margin-top: 6px;">Uses Calendar.app via AppleScript</p>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Apple Mail</label>
+              <p class="setting-description" style="color: ${config.appleMail?.enabled ? 'var(--success)' : 'var(--foreground-muted)'}">
+                ${config.appleMail?.enabled ? '✓ Enabled' : '○ Disabled'}
+              </p>
+              <div class="toggle-group" style="margin-top: 8px;">
+                <button class="toggle-option ${config.appleMail?.enabled ? 'active' : ''}" onclick="toggleIntegration('appleMail', true)">Enable</button>
+                <button class="toggle-option ${!config.appleMail?.enabled ? 'active' : ''}" onclick="toggleIntegration('appleMail', false)">Disable</button>
+              </div>
+              <p class="setting-description" style="font-size: 11px; margin-top: 6px;">Uses Mail.app via AppleScript</p>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+            <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--foreground);">Financial Tracking</h3>
+
+            <div class="setting-group">
+              <label class="setting-label">Stock Prices</label>
+              <p class="setting-description" style="color: ${config.stocks?.enabled ? 'var(--success)' : 'var(--foreground-muted)'}">
+                ${config.stocks?.enabled ? '✓ Tracking: ' + (config.stocks?.symbols || []).join(', ') : '○ Disabled'}
+              </p>
+              <div class="toggle-group" style="margin-top: 8px;">
+                <button class="toggle-option ${config.stocks?.enabled ? 'active' : ''}" onclick="toggleIntegration('stocks', true)">Enable</button>
+                <button class="toggle-option ${!config.stocks?.enabled ? 'active' : ''}" onclick="toggleIntegration('stocks', false)">Disable</button>
+              </div>
+              ${config.stocks?.enabled ? `
+              <div style="margin-top: 8px;">
+                <input type="text" id="stockSymbols" value="${(config.stocks?.symbols || []).join(',')}" placeholder="AAPL,MSFT,GOOGL" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background-tertiary); color: var(--foreground);">
+                <button onclick="saveStockSymbols()" style="margin-top: 8px; padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer; font-size: 13px;">Save Symbols</button>
+              </div>
+              ` : ''}
+              <p class="setting-description" style="font-size: 11px; margin-top: 6px;">Uses Yahoo Finance (requires yfinance Python library)</p>
             </div>
           </div>
         </div>
@@ -3211,110 +3738,9 @@ function generateHTML(data, config, status) {
         document.getElementById('detailModal').classList.remove('open');
       }
       
-      // Open location in Maps
-      function openMaps(location) {
-        const encoded = encodeURIComponent(location);
-        window.open('https://www.google.com/maps/search/?api=1&query=' + encoded, '_blank');
-      }
-      
-      // Copy event link to clipboard
-      async function copyEventLink(eventId) {
-        try {
-          const res = await fetch('/api/event/' + eventId);
-          const event = await res.json();
-          if (event.htmlLink) {
-            await navigator.clipboard.writeText(event.htmlLink);
-            showToast('Link copied to clipboard');
-          } else {
-            showToast('No link available', 'error');
-          }
-        } catch (e) {
-          showToast('Failed to copy link', 'error');
-        }
-      }
-      
-      // Archive email
-      async function archiveEmail(threadId, btn) {
-        try {
-          const listItem = btn.closest('.list-item');
-          listItem.style.opacity = '0.5';
-          
-          const res = await fetch('/api/email/archive', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ threadId })
-          });
-          
-          if (res.ok) {
-            listItem.style.transition = 'all 0.3s ease';
-            listItem.style.transform = 'translateX(-100%)';
-            listItem.style.opacity = '0';
-            setTimeout(() => listItem.remove(), 300);
-            showToast('Email archived');
-          } else {
-            listItem.style.opacity = '1';
-            showToast('Failed to archive', 'error');
-          }
-        } catch (e) {
-          showToast('Failed to archive', 'error');
-        }
-      }
-      
-      // Trash email
-      async function trashEmail(threadId, btn) {
-        try {
-          const listItem = btn.closest('.list-item');
-          listItem.style.opacity = '0.5';
-          
-          const res = await fetch('/api/email/trash', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ threadId })
-          });
-          
-          if (res.ok) {
-            listItem.style.transition = 'all 0.3s ease';
-            listItem.style.transform = 'translateX(100%)';
-            listItem.style.opacity = '0';
-            setTimeout(() => listItem.remove(), 300);
-            showToast('Email deleted');
-          } else {
-            listItem.style.opacity = '1';
-            showToast('Failed to delete', 'error');
-          }
-        } catch (e) {
-          showToast('Failed to delete', 'error');
-        }
-      }
-      
-      // Quick join meeting
-      function joinMeeting(meetLink) {
-        window.open(meetLink, '_blank');
-      }
-      
-      // Copy event details to clipboard
-      async function copyEventDetails(eventId, summary, location, startTime) {
-        try {
-          const start = new Date(startTime);
-          const dateStr = start.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-          const timeStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-          let text = decodeURIComponent(summary) + '\\n' + dateStr + ' at ' + timeStr;
-          if (location) text += '\\n📍 ' + decodeURIComponent(location);
-          await navigator.clipboard.writeText(text);
-          showToast('Event details copied!');
-        } catch (e) {
-          showToast('Failed to copy', 'error');
-        }
-      }
-      
       // Close on overlay click
       document.getElementById('detailModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('detail-modal')) closeDetail();
-      });
-      
-      // Close on Escape key
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeDetail();
       });
       
       // Open task detail
@@ -3386,11 +3812,9 @@ function generateHTML(data, config, status) {
         
         try {
           const res = await fetch('/api/event/' + eventId);
-          const data = await res.json();
-          // Handle both {event: {...}} wrapper and direct event object
-          const event = data.event || data;
+          const event = await res.json();
           
-          if (event.error || !event.summary) {
+          if (event.error) {
             document.getElementById('detailBody').innerHTML = '<p>Error loading event</p>';
             return;
           }
@@ -3434,11 +3858,9 @@ function generateHTML(data, config, status) {
             </div>
             \` : ''}
             
-            <div class="detail-actions" style="flex-wrap: wrap;">
-              \${event.hangoutLink ? \`<a href="\${event.hangoutLink}" target="_blank" class="detail-btn primary">🎥 Join Meeting</a>\` : ''}
-              \${event.location ? \`<a href="https://www.google.com/maps/search/?api=1&query=\${encodeURIComponent(event.location)}" target="_blank" class="detail-btn">📍 Get Directions</a>\` : ''}
-              \${event.htmlLink ? \`<a href="\${event.htmlLink}" target="_blank" class="detail-btn">📅 Open in Calendar</a>\` : ''}
-              <button class="detail-btn" onclick="copyEventDetails('\${encodeURIComponent(event.id)}', '\${escapeHtmlJS(event.summary || '')}', '\${escapeHtmlJS(event.location || '')}', '\${start.toISOString()}')">📋 Copy Details</button>
+            <div class="detail-actions">
+              \${event.hangoutLink ? \`<a href="\${event.hangoutLink}" target="_blank" class="detail-btn primary">Join Meeting →</a>\` : ''}
+              \${event.htmlLink ? \`<a href="\${event.htmlLink}" target="_blank" class="detail-btn">Open in Calendar →</a>\` : ''}
             </div>
           \`;
         } catch (e) {
@@ -3636,18 +4058,95 @@ function generateHTML(data, config, status) {
           showToast('Failed to save settings', 'error');
         }
       }
-      
-      // Scroll calendar to today on page load
-      (function scrollCalendarToToday() {
-        const todayHeader = document.getElementById('today-header');
-        if (todayHeader) {
-          const cardBody = todayHeader.closest('.card-body');
-          if (cardBody) {
-            cardBody.scrollTop = todayHeader.offsetTop - cardBody.offsetTop;
+
+      // Tab switching
+      function switchTab(tabName) {
+        document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelector('.settings-tab[onclick*="' + tabName + '"]').classList.add('active');
+        document.getElementById('tab-' + tabName).classList.add('active');
+      }
+
+      // Save review settings
+      async function saveReviewSettings() {
+        const reviewConfig = {
+          emails: { enabled: document.getElementById('r-emails').checked },
+          slack: {
+            enabled: document.getElementById('r-slack').checked,
+            tokenPath: document.getElementById('r-slack-path').value.trim()
+          },
+          xcom: { enabled: false, sshHost: '', birdPath: '' },
+          fireflies: { enabled: false, apiKey: '', speakerName: '' },
+          gitReposFolder: document.getElementById('r-git-folder').value.trim() || '~/Documents/Development',
+          googleDocs: { enabled: document.getElementById('r-docs').checked },
+          activityWatch: { enabled: document.getElementById('r-aw').checked },
+          screenTime: {
+            enabled: document.getElementById('r-screentime').checked,
+            sshHost: '',
+            scriptPath: '~/get_screentime.py'
           }
+        };
+
+        try {
+          const res = await fetch('/api/review-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reviewConfig)
+          });
+          if (res.ok) {
+            showToast('Review settings saved!');
+          } else {
+            showToast('Failed to save settings', 'error');
+          }
+        } catch (e) {
+          showToast('Failed to save: ' + e.message, 'error');
         }
-      })();
-      
+      }
+
+      // Toggle slack path visibility
+      document.getElementById('r-slack')?.addEventListener('change', (e) => {
+        document.getElementById('r-slack-path').style.display = e.target.checked ? 'block' : 'none';
+      });
+
+      // Toggle integration on/off
+      async function toggleIntegration(name, enabled) {
+        try {
+          const body = {};
+          body[name] = { enabled };
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (res.ok) {
+            showToast(name + ' ' + (enabled ? 'enabled' : 'disabled') + '! Refreshing...');
+            setTimeout(() => location.reload(), 1000);
+          }
+        } catch (e) {
+          showToast('Failed to toggle integration', 'error');
+        }
+      }
+
+      // Save stock symbols
+      async function saveStockSymbols() {
+        const symbolsInput = document.getElementById('stockSymbols');
+        if (!symbolsInput) return;
+        const symbols = symbolsInput.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+        try {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stocks: { symbols } })
+          });
+          if (res.ok) {
+            showToast('Stock symbols saved! Refreshing...');
+            setTimeout(() => location.reload(), 1000);
+          }
+        } catch (e) {
+          showToast('Failed to save symbols', 'error');
+        }
+      }
+
       ${config.gui?.autoRefresh !== false ? `setTimeout(() => location.reload(), ${(config.gui?.refreshInterval || 300) * 1000});` : ''}
     </script>
 </body>
@@ -3681,6 +4180,9 @@ function generateSetupHTML(status, config) {
     code { background: var(--bg-hover); padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
     .back-link { display: inline-block; margin-top: 2rem; color: var(--accent); text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
+    .setting { margin: 0.75rem 0; }
+    .setting label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .setting input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -3727,7 +4229,112 @@ function generateSetupHTML(status, config) {
       </div>
       <div class="detail">Location: ${status.weather.location || 'Auto-detect by IP'}</div>
     </div>
-    
+
+    <h2 style="margin: 2rem 0 1rem; font-size: 1.25rem;">🏆 Daily Review Settings</h2>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Communication Tracking</span>
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-emails" ${config.review?.emails?.enabled !== false ? 'checked' : ''}> Emails (via Google)</label>
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-slack" ${config.review?.slack?.enabled ? 'checked' : ''}> Slack Messages</label>
+        <input type="text" id="review-slack-path" placeholder="Token path (e.g., ~/secrets/slack.json)" value="${escapeHtml(config.review?.slack?.tokenPath || '')}" style="margin-top: 0.5rem; width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text);">
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-xcom" ${config.review?.xcom?.enabled ? 'checked' : ''}> X.com / Twitter</label>
+        <input type="text" id="review-xcom-ssh" placeholder="SSH host (leave empty for local)" value="${escapeHtml(config.review?.xcom?.sshHost || '')}" style="margin-top: 0.5rem; width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text);">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Meetings (Fireflies)</span>
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-fireflies" ${config.review?.fireflies?.enabled ? 'checked' : ''}> Enable Fireflies</label>
+        <input type="text" id="review-fireflies-key" placeholder="API Key" value="${escapeHtml(config.review?.fireflies?.apiKey || '')}" style="margin-top: 0.5rem; width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text);">
+        <input type="text" id="review-fireflies-name" placeholder="Your name (for speaker verification)" value="${escapeHtml(config.review?.fireflies?.speakerName || '')}" style="margin-top: 0.5rem; width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text);">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Output Tracking</span>
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-docs" ${config.review?.googleDocs?.enabled !== false ? 'checked' : ''}> Google Docs</label>
+      </div>
+      <div class="setting">
+        <label>Git Repos Folder (auto-scans for repos):</label>
+        <input type="text" id="review-git-folder" placeholder="~/Documents/Development" value="${escapeHtml(config.review?.gitReposFolder || '~/Documents/Development')}" style="margin-top: 0.5rem; width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-family: monospace;">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Focus Time</span>
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-aw" ${config.review?.activityWatch?.enabled !== false ? 'checked' : ''}> ActivityWatch</label>
+      </div>
+      <div class="setting">
+        <label><input type="checkbox" id="review-screentime" ${config.review?.screenTime?.enabled ? 'checked' : ''}> macOS Screen Time</label>
+        <input type="text" id="review-screentime-ssh" placeholder="SSH host (leave empty for local)" value="${escapeHtml(config.review?.screenTime?.sshHost || '')}" style="margin-top: 0.5rem; width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text);">
+      </div>
+    </div>
+
+    <button id="save-review" style="margin-top: 1rem; padding: 0.75rem 1.5rem; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer;">Save Review Settings</button>
+    <span id="save-status" style="margin-left: 1rem; color: var(--green); display: none;">✓ Saved!</span>
+
+    <script>
+      document.getElementById('save-review').addEventListener('click', async () => {
+        const reviewConfig = {
+          emails: { enabled: document.getElementById('review-emails').checked },
+          slack: {
+            enabled: document.getElementById('review-slack').checked,
+            tokenPath: document.getElementById('review-slack-path').value.trim()
+          },
+          xcom: {
+            enabled: document.getElementById('review-xcom').checked,
+            sshHost: document.getElementById('review-xcom-ssh').value.trim(),
+            birdPath: '~/Code/bird'
+          },
+          fireflies: {
+            enabled: document.getElementById('review-fireflies').checked,
+            apiKey: document.getElementById('review-fireflies-key').value.trim(),
+            speakerName: document.getElementById('review-fireflies-name').value.trim()
+          },
+          googleDocs: { enabled: document.getElementById('review-docs').checked },
+          gitReposFolder: document.getElementById('review-git-folder').value.trim() || '~/Documents/Development',
+          activityWatch: { enabled: document.getElementById('review-aw').checked },
+          screenTime: {
+            enabled: document.getElementById('review-screentime').checked,
+            sshHost: document.getElementById('review-screentime-ssh').value.trim(),
+            scriptPath: '~/get_screentime.py'
+          }
+        };
+
+        try {
+          const res = await fetch('/api/review-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reviewConfig)
+          });
+          const result = await res.json();
+          if (result.success) {
+            const status = document.getElementById('save-status');
+            status.style.display = 'inline';
+            setTimeout(() => status.style.display = 'none', 2000);
+          }
+        } catch (e) {
+          alert('Failed to save: ' + e.message);
+        }
+      });
+    </script>
+
     <a href="/" class="back-link">← Back to Dashboard</a>
   </div>
 </body>
@@ -3766,42 +4373,6 @@ function getWeatherIconEmoji(condition) {
 }
 
 function startGUIServer(config, port) {
-  // ═══════════════════════════════════════════════════════════════════════════
-  // IN-MEMORY CACHE - Instant responses after first load
-  // ═══════════════════════════════════════════════════════════════════════════
-  const CACHE = { data: null, html: null, timestamp: 0, refreshing: false };
-  const CACHE_TTL = 60000; // 60 seconds
-  const STALE_TTL = 10000; // 10 seconds before background refresh
-  
-  function isCacheValid() { return CACHE.data && (Date.now() - CACHE.timestamp < CACHE_TTL); }
-  function isCacheStale() { return CACHE.data && (Date.now() - CACHE.timestamp > STALE_TTL); }
-  
-  function refreshCache() {
-    if (CACHE.refreshing) return;
-    CACHE.refreshing = true;
-    setImmediate(() => {
-      try {
-        CACHE.data = fetchAllData(config);
-        CACHE.html = generateHTML(CACHE.data, config, getIntegrationStatus(config));
-        CACHE.timestamp = Date.now();
-      } catch (e) { console.error('Cache refresh error:', e.message); }
-      CACHE.refreshing = false;
-    });
-  }
-  
-  // Pre-warm cache on startup
-  console.log('⚡ Pre-loading data...');
-  const startTime = Date.now();
-  try {
-    CACHE.data = fetchAllData(config);
-    CACHE.html = generateHTML(CACHE.data, config, getIntegrationStatus(config));
-    CACHE.timestamp = Date.now();
-    console.log('✓ Data cached in ' + (Date.now() - startTime) + 'ms');
-  } catch (e) { console.log('⚠ Pre-load failed:', e.message); }
-  
-  // Background refresh every 60 seconds
-  setInterval(refreshCache, CACHE_TTL);
-  
   // Helper to parse POST body
   const parseBody = (req) => new Promise((resolve) => {
     let body = '';
@@ -3820,13 +4391,8 @@ function startGUIServer(config, port) {
     return { success: true };
   };
   
-  // Cache integration status (only compute once, not on every request)
-  let cachedStatus = getIntegrationStatus(config);
-  const refreshStatus = () => { setImmediate(() => { cachedStatus = getIntegrationStatus(config); }); };
-  setInterval(refreshStatus, 300000); // Refresh every 5 minutes
-  
   const server = http.createServer(async (req, res) => {
-    const status = cachedStatus;
+    const status = getIntegrationStatus(config);
     
     // CORS headers for all requests
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -3839,20 +4405,11 @@ function startGUIServer(config, port) {
       return;
     }
     
-    // API: Get data - uses cache for instant response
+    // API: Get data
     if (req.url === '/api/data' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
-      if (CACHE.data && isCacheValid()) {
-        res.setHeader('X-Cache', 'HIT');
-        res.end(JSON.stringify({ ...CACHE.data, status, config: { weather: config.weather } }));
-        if (isCacheStale()) refreshCache();
-      } else {
-        const data = fetchAllData(config);
-        CACHE.data = data;
-        CACHE.timestamp = Date.now();
-        res.setHeader('X-Cache', 'MISS');
-        res.end(JSON.stringify({ ...data, status, config: { weather: config.weather } }));
-      }
+      const data = fetchAllData(config);
+      res.end(JSON.stringify({ ...data, status, config: { weather: config.weather } }));
     }
     // API: Get status
     else if (req.url === '/api/status' && req.method === 'GET') {
@@ -3962,65 +4519,31 @@ function startGUIServer(config, port) {
       const result = markEmailAsRead(config, body.emailId);
       res.end(JSON.stringify(result));
     }
-    // API: Archive email
-    else if (req.url === '/api/email/archive' && req.method === 'POST') {
+    // API: Save review config
+    else if (req.url === '/api/review-config' && req.method === 'POST') {
       res.setHeader('Content-Type', 'application/json');
       const body = await parseBody(req);
-      
-      if (!body.threadId) {
-        res.end(JSON.stringify({ success: false, error: 'Missing threadId' }));
-        return;
-      }
-      
-      const result = archiveEmail(config, body.threadId);
-      res.end(JSON.stringify(result));
-    }
-    // API: Trash email
-    else if (req.url === '/api/email/trash' && req.method === 'POST') {
-      res.setHeader('Content-Type', 'application/json');
-      const body = await parseBody(req);
-      
-      if (!body.threadId) {
-        res.end(JSON.stringify({ success: false, error: 'Missing threadId' }));
-        return;
-      }
-      
-      const result = trashEmail(config, body.threadId);
-      res.end(JSON.stringify(result));
+
+      // Update config with new review settings
+      config.review = body;
+      saveConfig(config);
+
+      res.end(JSON.stringify({ success: true }));
     }
     // Setup page
     else if (req.url === '/setup') {
       res.setHeader('Content-Type', 'text/html');
       res.end(generateSetupHTML(status, config));
     }
-    // Main dashboard - INSTANT from cache
+    // Main dashboard
     else {
       res.setHeader('Content-Type', 'text/html');
-      
-      // Fast path: serve cached HTML instantly
-      if (CACHE.html) {
-        res.setHeader('X-Cache', isCacheStale() ? 'STALE' : 'HIT');
-        res.end(CACHE.html);
-        // Background refresh if stale
-        if (isCacheStale()) refreshCache();
-        return;
-      }
-      
-      // Cold path: generate fresh (first load only)
       const data = fetchAllData(config);
-      CACHE.data = data;
-      CACHE.html = generateHTML(data, config, status);
-      CACHE.timestamp = Date.now();
-      res.setHeader('X-Cache', 'MISS');
-      res.end(CACHE.html);
+      res.end(generateHTML(data, config, status));
     }
   });
   
-  // Listen on 0.0.0.0 for Docker, 127.0.0.1 otherwise
-  const isDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER === '1';
-  const host = isDocker ? '0.0.0.0' : '127.0.0.1';
-  
-  server.listen(port, host, () => {
+  server.listen(port, '127.0.0.1', () => {
     const url = `http://localhost:${port}`;
     console.log(`\n☀️  Morning Dashboard GUI`);
     console.log(`${'─'.repeat(40)}`);
@@ -4029,11 +4552,8 @@ function startGUIServer(config, port) {
     console.log(`API:        ${url}/api/data`);
     console.log(`\nPress Ctrl+C to stop\n`);
     
-    // Don't try to open browser in Docker/headless environments
-    if (!isDocker && !process.env.NO_BROWSER) {
-      const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-      try { spawn(openCmd, [url], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {}
-    }
+    const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    try { spawn(openCmd, [url], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {}
   });
   
   server.on('error', (e) => {
@@ -4043,6 +4563,214 @@ function startGUIServer(config, port) {
     }
     throw e;
   });
+}
+
+// ─── Daily Review ─────────────────────────────────────────────────────────────
+
+function runDailyReview(date, config) {
+  const reviewDate = date || new Date().toISOString().split('T')[0];
+  const reviewConfig = config.review || {};
+
+  console.log(`\n${c.bold}🏆 Daily Performance Review - ${reviewDate}${c.reset}`);
+  console.log(`${c.dim}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}\n`);
+
+  // Calculate next date (for date range queries)
+  const dateObj = new Date(reviewDate);
+  const nextDate = new Date(dateObj);
+  nextDate.setDate(nextDate.getDate() + 1);
+  const dateNext = nextDate.toISOString().split('T')[0];
+
+  // ============ COMMUNICATION ============
+  console.log(`${c.bold}📬 COMMUNICATION${c.reset}`);
+
+  // Emails sent (using gog if available)
+  if (reviewConfig.emails?.enabled !== false) {
+    let emails = '?';
+    const googleCheck = checkGoogleSetup(config);
+    if (googleCheck.installed && googleCheck.authenticated && googleCheck.hasGmail) {
+      const account = googleCheck.account;
+      const query = `after:${reviewDate.replace(/-/g, '/')} before:${dateNext.replace(/-/g, '/')} from:me`;
+      const raw = exec(`gog gmail search "${account}" "${query}" --json 2>/dev/null`, { timeout: 10000 });
+      const data = parseJSON(raw);
+      emails = Array.isArray(data) ? data.length : '?';
+    }
+    console.log(`  ${c.dim}•${c.reset} Emails sent: ${emails}`);
+  }
+
+  // Slack messages
+  if (reviewConfig.slack?.enabled) {
+    let slackMsgs = '?';
+    const slackTokenPath = reviewConfig.slack.tokenPath?.replace(/^~/, os.homedir()) || '';
+    if (slackTokenPath && fs.existsSync(slackTokenPath)) {
+      try {
+        const slackConfig = JSON.parse(fs.readFileSync(slackTokenPath, 'utf-8'));
+        const slackToken = slackConfig.user_token;
+        if (slackToken) {
+          const raw = exec(`curl -s "https://slack.com/api/search.messages" -H "Authorization: Bearer ${slackToken}" -G --data-urlencode "query=from:me on:${reviewDate}" --data-urlencode "count=1" 2>/dev/null`, { timeout: 10000 });
+          const data = parseJSON(raw);
+          slackMsgs = data?.messages?.total ?? '?';
+        }
+      } catch (e) { /* ignore */ }
+    }
+    console.log(`  ${c.dim}•${c.reset} Slack messages: ${slackMsgs}`);
+  }
+
+  // X.com mentions (via bird)
+  if (reviewConfig.xcom?.enabled) {
+    let xcom = '?';
+    const sshHost = reviewConfig.xcom.sshHost || '';
+    const birdPath = reviewConfig.xcom.birdPath || '~/Code/bird';
+    let cmd;
+    if (sshHost) {
+      cmd = `ssh -o ConnectTimeout=5 -o BatchMode=yes ${sshHost} "cd ${birdPath} && node dist/cli.js mentions -n 50 2>/dev/null | grep -c '@' || echo 0" 2>/dev/null`;
+    } else {
+      const localBirdPath = birdPath.replace(/^~/, os.homedir());
+      cmd = `cd "${localBirdPath}" && node dist/cli.js mentions -n 50 2>/dev/null | grep -c '@' || echo 0`;
+    }
+    const birdResult = exec(cmd, { timeout: 15000 });
+    if (birdResult !== null) xcom = birdResult;
+    console.log(`  ${c.dim}•${c.reset} X.com mentions: ${xcom}`);
+  }
+
+  console.log();
+
+  // ============ MEETINGS ============
+  if (reviewConfig.fireflies?.enabled) {
+    console.log(`${c.bold}📅 MEETINGS${c.reset} ${c.dim}(Fireflies - speaker verified)${c.reset}`);
+
+    let meetings = [];
+    const firefliesKey = reviewConfig.fireflies.apiKey || '';
+    const speakerName = (reviewConfig.fireflies.speakerName || '').toLowerCase();
+
+    if (firefliesKey) {
+      try {
+        const query = '{ transcripts(limit: 30) { title dateString duration sentences { speaker_name } } }';
+        const raw = exec(`curl -s -X POST "https://api.fireflies.ai/graphql" -H "Authorization: Bearer ${firefliesKey}" -H "Content-Type: application/json" -d '{"query": "${query}"}' 2>/dev/null`, { timeout: 15000 });
+        const data = parseJSON(raw);
+        if (data?.data?.transcripts) {
+          meetings = data.data.transcripts
+            .filter(t => t.dateString && t.dateString.startsWith(reviewDate))
+            .filter(t => {
+              if (!speakerName) return true;
+              const speakers = (t.sentences || []).map(s => (s.speaker_name || '').toLowerCase());
+              return speakers.some(s => s.includes(speakerName));
+            })
+            .map(t => ({ title: t.title.replace('Meet – ', ''), duration: Math.floor(t.duration) }));
+          meetings = [...new Map(meetings.map(m => [m.title, m])).values()];
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    if (meetings.length > 0) {
+      meetings.forEach(m => console.log(`  ${c.dim}•${c.reset} ${m.title} (${m.duration} min)`));
+      const totalMins = meetings.reduce((sum, m) => sum + m.duration, 0);
+      const totalHrs = (totalMins / 60).toFixed(1);
+      console.log(`  ${c.dim}Total: ${meetings.length} meetings (~${totalHrs} hrs)${c.reset}`);
+    } else {
+      console.log(`  ${c.dim}• No meetings found${c.reset}`);
+    }
+
+    console.log();
+  }
+
+  // ============ OUTPUT ============
+  console.log(`${c.bold}💻 OUTPUT${c.reset}`);
+
+  // Git commits - scan folder for repos
+  let gitCommits = 0;
+  const gitFolder = (reviewConfig.gitReposFolder || '~/Documents/Development').replace(/^~/, os.homedir());
+
+  // Find all git repos in the folder (max depth 2)
+  const findReposCmd = `find "${gitFolder}" -maxdepth 2 -type d -name ".git" 2>/dev/null | head -50`;
+  const gitDirs = exec(findReposCmd, { timeout: 10000 });
+
+  if (gitDirs) {
+    const repos = gitDirs.split('\n').filter(d => d).map(d => path.dirname(d));
+    for (const repo of repos) {
+      const count = exec(`cd "${repo}" && git log --oneline --since="${reviewDate} 00:00" --until="${dateNext} 00:00" 2>/dev/null | wc -l`, { timeout: 5000 });
+      if (count) gitCommits += parseInt(count.trim(), 10) || 0;
+    }
+  }
+  console.log(`  ${c.dim}•${c.reset} Git commits: ${gitCommits}`);
+
+  // Google Docs edited
+  if (reviewConfig.googleDocs?.enabled !== false) {
+    let docs = '?';
+    const googleCheck = checkGoogleSetup(config);
+    if (googleCheck.installed && googleCheck.authenticated) {
+      const account = googleCheck.account;
+      const raw = exec(`gog drive list "${account}" --query "modifiedTime>='${reviewDate}T00:00:00'" --json 2>/dev/null`, { timeout: 10000 });
+      const data = parseJSON(raw);
+      docs = Array.isArray(data) ? data.length : '?';
+    }
+    console.log(`  ${c.dim}•${c.reset} Docs modified: ${docs}`);
+  }
+
+  console.log();
+
+  // ============ FOCUS TIME ============
+  console.log(`${c.bold}⏱️ FOCUS TIME${c.reset}`);
+
+  // ActivityWatch
+  if (reviewConfig.activityWatch?.enabled !== false) {
+    const awData = exec(`curl -sL 'http://127.0.0.1:5600/api/0/buckets/' 2>/dev/null`, { timeout: 5000 });
+    if (awData) {
+      const buckets = parseJSON(awData);
+      if (buckets) {
+        const windowBucket = Object.keys(buckets).find(k => k.startsWith('aw-watcher-window'));
+        if (windowBucket) {
+          const eventsRaw = exec(`curl -sL 'http://127.0.0.1:5600/api/0/buckets/${windowBucket}/events?limit=500' 2>/dev/null`, { timeout: 10000 });
+          const events = parseJSON(eventsRaw);
+          if (Array.isArray(events)) {
+            const apps = {};
+            let total = 0;
+            events.forEach(e => {
+              const app = e.data?.app || 'unknown';
+              const duration = e.duration || 0;
+              apps[app] = (apps[app] || 0) + duration;
+              total += duration;
+            });
+            const sortedApps = Object.entries(apps).sort((a, b) => b[1] - a[1]).slice(0, 5);
+            console.log(`  ActivityWatch: ${(total / 3600).toFixed(1)} hrs`);
+            sortedApps.forEach(([app, dur]) => {
+              console.log(`    ${c.dim}${app}: ${Math.round(dur / 60)}min${c.reset}`);
+            });
+          }
+        }
+      }
+    } else {
+      console.log(`  ${c.yellow}ActivityWatch: not running${c.reset}`);
+    }
+  }
+
+  // Screen Time
+  if (reviewConfig.screenTime?.enabled) {
+    const sshHost = reviewConfig.screenTime.sshHost || '';
+    const scriptPath = reviewConfig.screenTime.scriptPath || '~/get_screentime.py';
+    let screenTimeData;
+
+    if (sshHost) {
+      screenTimeData = exec(`ssh -o ConnectTimeout=5 -o BatchMode=yes ${sshHost} "python3 ${scriptPath} ${reviewDate}" 2>/dev/null`, { timeout: 15000 });
+    } else {
+      // Local Mac - query knowledgeC.db directly
+      const localScript = scriptPath.replace(/^~/, os.homedir());
+      if (fs.existsSync(localScript)) {
+        screenTimeData = exec(`python3 "${localScript}" ${reviewDate} 2>/dev/null`, { timeout: 15000 });
+      }
+    }
+
+    if (screenTimeData && screenTimeData !== 'No data found') {
+      console.log();
+      console.log(`  Screen Time${sshHost ? ' (remote)' : ''}:`);
+      screenTimeData.split('\n').slice(0, 8).forEach(line => {
+        if (line.trim()) console.log(`    ${c.dim}${line}${c.reset}`);
+      });
+    }
+  }
+
+  console.log();
+  console.log(`${c.dim}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
+  console.log(`${c.dim}Generated: ${new Date().toLocaleString()}${c.reset}`);
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -4085,6 +4813,9 @@ async function main() {
       case 'weather':
         await runSetupWeather(config);
         break;
+      case 'review':
+        await runSetupReview(config);
+        break;
       default:
         await runSetupWizard(config);
     }
@@ -4096,6 +4827,13 @@ async function main() {
     const port = args.port || config.gui?.port || 3141;
     startGUIServer(config, port);
     return;
+  }
+
+  // Review command
+  if (args.command === 'review') {
+    useColor = config.display.color;
+    runDailyReview(args.reviewDate, config);
+    process.exit(0);
   }
   
   // Terminal dashboard
@@ -4122,7 +4860,12 @@ async function main() {
   if (shouldShow('calendar')) { renderCalendar(data.calendar.events, data.calendar.focusBlocks, config); console.log(); }
   if (shouldShow('email')) { renderEmails(data.email, config); console.log(); }
   if (shouldShow('github') && data.github.length > 0) { renderGitHub(data.github, config); console.log(); }
-  
+
+  // New integrations
+  if (shouldShow('stocks') && data.stocks?.length > 0) { renderStocks(data.stocks, config); console.log(); }
+  if (shouldShow('apple-calendar') && data.appleCalendar?.length > 0) { renderAppleCalendar(data.appleCalendar, config); console.log(); }
+  if (shouldShow('apple-mail') && data.appleMail?.length > 0) { renderAppleMail(data.appleMail, config); console.log(); }
+
   if (config.display.showSummary && showAll) {
     renderFooter({
       overdueTasks: data.tasks.overdue.length,
@@ -4130,6 +4873,9 @@ async function main() {
       events: data.calendar.events.length,
       emails: data.email.length,
       github: data.github.length,
+      stocks: data.stocks?.length || 0,
+      appleCalendar: data.appleCalendar?.length || 0,
+      appleMail: data.appleMail?.filter(e => e.unread)?.length || 0,
     }, config);
   }
 }
