@@ -4,10 +4,8 @@ services:
     container_name: morning-dashboard
     restart: unless-stopped
     ports:
-      - "443:3141"
+      - "80:3141"
     volumes:
-      # Mount SSL certificates for HTTPS
-      - ./certs:/app/certs:ro
       # Mount config and credentials from host
       - ~/.config/morning-dashboard:/root/.config/morning-dashboard:ro
       # Mount gog config for Gmail/Calendar auth (macOS path -> Linux path)
